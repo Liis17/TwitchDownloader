@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "TwitchDownloader.CLI": {
+      "commandName": "Project",
+      "commandLineArgs": "https://dgeft87wbj63p.cloudfront.net/dd7eb12016797284ecb3_anesilia_43135029080_1730801054/720p60/index-muted-VS8EL6DAMJ.m3u8"
+    }
+  }
+}
