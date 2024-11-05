@@ -52,7 +52,7 @@ namespace TwitchDownloader.CLI
         {
             string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
             Guid guid = Guid.NewGuid();
-            string outputFileName = Path.Combine(desktopPath, $"twitch_{DateTime.Now}_{guid}.mp4");  // Или ".mkv" если нужно
+            string outputFileName = Path.Combine(desktopPath, $"twitch_{DateTime.Now.Hour}_{DateTime.Now.Minute}_{DateTime.Now.Second}_{guid}.mp4");  // Или ".mkv" если нужно
 
             ProcessStartInfo processInfo = new ProcessStartInfo
             {
