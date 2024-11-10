@@ -1,9 +1,18 @@
 ﻿using System.Diagnostics;
 
+using Telegram.Bot.Types;
+
 namespace TwitchDownloader.CLI
 {
     class DownloadService
     {
+        private bool _trackableRecording = false;
+        private string savePath = string.Empty;
+
+        public DownloadService(string path)
+        {
+            savePath = path;
+        }
         public void StartDownload(string link)
         {
             if (link.Length == 0)
@@ -27,12 +36,16 @@ namespace TwitchDownloader.CLI
 
         public void StartAutoDownload(string link, string channelName)
         {
+            
             if (link.Length == 0)
             {
                 Console.WriteLine("Укажите ссылку на страницу видео Twitch в качестве параметра запуска.");
                 return;
             }
-
+            if (_trackableRecording)
+            {
+                return;
+            }
             string videoUrl = link;
             string m3u8Url = GetM3u8Url(videoUrl);
 
@@ -42,7 +55,10 @@ namespace TwitchDownloader.CLI
                 return;
             }
             Program.telegramService.SendMessage($"Обнаружена трансляция на канале {channelName}, начинается скачивание...");
-            DownloadStream(m3u8Url);
+            _trackableRecording = true;
+            DownloadStream(m3u8Url, channelName);
+            _trackableRecording = false;
+            Program.telegramService.SendMessage($"Трансляция {channelName} завершилась и была сохранена");
         }
 
         private string GetM3u8Url(string videoUrl)
@@ -68,11 +84,15 @@ namespace TwitchDownloader.CLI
             return m3u8Url;
         }
 
-        private void DownloadStream(string m3u8Url)
+        private void DownloadStream(string m3u8Url, string filename = "twitch")
         {
-            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            string SavePath = savePath;
+            if (savePath == string.Empty)
+            {
+                SavePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            }
             Guid guid = Guid.NewGuid();
-            string outputFileName = Path.Combine(desktopPath, $"twitch_{DateTime.Now.Hour}_{DateTime.Now.Minute}_{DateTime.Now.Second}_{guid}.mp4");  // Или ".mkv" если нужно
+            string outputFileName = Path.Combine(SavePath, $"{filename}_{DateTime.Now.Hour}_{DateTime.Now.Minute}_{DateTime.Now.Second}_{guid}.mp4");  // Или ".mkv" если нужно
 
             ProcessStartInfo processInfo = new ProcessStartInfo
             {

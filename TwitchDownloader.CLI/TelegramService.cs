@@ -11,6 +11,7 @@ using Telegram.Bot.Types;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
 using System.Threading;
+using File = System.IO.File;
 
 namespace TwitchDownloader.CLI
 {
@@ -18,9 +19,11 @@ namespace TwitchDownloader.CLI
     {
         private string BotToken = "123:abcd";
         public long AdminId = 123;
-
         public TelegramBotClient botClient;
-        private bool _waitingForLink = false; // Флаг ожидания ссылки
+        private bool _waitingForLink = false;
+        private bool _waitingForChannel = false;
+        private string _trackedChannel = null; // Отслеживаемый канал
+        private readonly string _filePath = "trackable.user"; // Путь к файлу
 
         public async Task StartBotAsync(string token, string id)
         {
@@ -28,6 +31,7 @@ namespace TwitchDownloader.CLI
             AdminId = int.Parse(id);
 
             botClient = new TelegramBotClient(BotToken);
+            LoadTrackedChannel(); // Загрузка канала из файла при старте
 
             using var cts = new CancellationTokenSource();
             var receiverOptions = new ReceiverOptions
@@ -43,8 +47,9 @@ namespace TwitchDownloader.CLI
 
             var me = await botClient.GetMeAsync();
             Console.WriteLine($"Запущен бот {me.Username}");
-            Console.ReadLine();
+            StartTrackingChannel(); // Запуск задачи отслеживания канала
 
+            Console.ReadLine();
             cts.Cancel();
         }
 
@@ -72,6 +77,14 @@ namespace TwitchDownloader.CLI
                         }
                         _waitingForLink = false;
                     }
+                    else if (_waitingForChannel)
+                    {
+                        _trackedChannel = message.Text;
+                        SaveTrackedChannel(); 
+                        _waitingForChannel = false;
+                        await botClient.SendTextMessageAsync(message.Chat.Id, $"Канал {message.Text} добавлен в отслеживаемые.", cancellationToken: cancellationToken);
+                        await ShowMainMenu(botClient, message.Chat.Id, cancellationToken);
+                    }
                 }
                 else
                 {
@@ -95,30 +108,42 @@ namespace TwitchDownloader.CLI
                             var cancelKeyboard = new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("Отменить", "cancel"));
                             await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введи ссылку на видео Twitch. Для отмены нажми 'Отменить'.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
                             break;
+                        case "track_channel":
+                            _waitingForChannel = true;
+                            var cancelTrackKeyboard = new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("Отменить", "cancel"));
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введите имя канала Twitch (без ссылки). Для отмены нажмите 'Отменить'.", replyMarkup: cancelTrackKeyboard, cancellationToken: cancellationToken);
+                            break;
                         case "cancel":
                             _waitingForLink = false;
+                            _waitingForChannel = false;
                             await ShowMainMenu(botClient, callbackQuery.Message.Chat.Id, cancellationToken);
                             break;
                     }
                 }
             }
         }
+
         public async void SendMessage(string text)
         {
             await botClient.SendTextMessageAsync(AdminId, text, cancellationToken: new CancellationToken());
         }
+
         private async Task ShowMainMenu(ITelegramBotClient botClient, long chatId, CancellationToken cancellationToken)
         {
             var buttons = new[]
             {
             new[]
             {
-                InlineKeyboardButton.WithCallbackData("⬇️ Скачать", "add_link")
+                InlineKeyboardButton.WithCallbackData("⬇️ Скачать", "add_link"),
+                InlineKeyboardButton.WithCallbackData("👁️ Отслеживать", "track_channel")
             }
         };
 
             var keyboard = new InlineKeyboardMarkup(buttons);
-            await botClient.SendTextMessageAsync(chatId, $"Сейчас {DateTime.Now}\n\nДля загрузки видео с Twitch нажми на кнопку ниже", replyMarkup: keyboard, cancellationToken: cancellationToken);
+            var trackingInfo = _trackedChannel != null
+                ? $"\n\nОтслеживаемый канал: {_trackedChannel}"
+                : "\n\nНет отслеживаемого канала.";
+            await botClient.SendTextMessageAsync(chatId, $"Сейчас {DateTime.Now}{trackingInfo}\n\nДля загрузки видео с Twitch нажми на кнопку ниже", replyMarkup: keyboard, cancellationToken: cancellationToken);
         }
 
         private async Task SaveVideo(string link)
@@ -127,7 +152,7 @@ namespace TwitchDownloader.CLI
             Program.downloadService.StartDownload(link);
         }
 
-        private async Task SaveAutoVideo(string link ,string channelName)
+        private async Task SaveAutoVideo(string link, string channelName)
         {
             Program.downloadService.StartAutoDownload(link, channelName);
         }
@@ -136,6 +161,35 @@ namespace TwitchDownloader.CLI
         {
             Console.WriteLine($"Ошибка: {exception.Message}");
             return Task.CompletedTask;
+        }
+
+        private void StartTrackingChannel()
+        {
+            if (string.IsNullOrEmpty(_trackedChannel)) return;
+
+            Task.Run(async () =>
+            {
+                while (true)
+                {
+                    var link = $"https://twitch.tv/{_trackedChannel}";
+                    Console.WriteLine($"Проверка {_trackedChannel} на наличие трансляции");
+                    await SaveAutoVideo(link, _trackedChannel);
+                    await Task.Delay(TimeSpan.FromMinutes(5));
+                }
+            });
+        }
+
+        private void LoadTrackedChannel()
+        {
+            if (File.Exists(_filePath))
+            {
+                _trackedChannel = File.ReadAllText(_filePath);
+            }
+        }
+
+        private void SaveTrackedChannel()
+        {
+            File.WriteAllText(_filePath, _trackedChannel);
         }
     }
 }

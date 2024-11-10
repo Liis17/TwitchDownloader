@@ -10,7 +10,19 @@ namespace TwitchDownloader.CLI
         public static DownloadService downloadService;
         static void Main(string[] args)
         {
-            downloadService = new DownloadService();
+            var path = string.Empty;
+            if (args.Length != 0)
+            {
+                path = args[0];
+                if (!Directory.Exists(path))
+                {
+                    Console.WriteLine("Указанный аргумент запуска не являектся существующим путем на диске!");
+                    Console.ReadKey();
+                    return;
+                }
+            }
+            
+            downloadService = new DownloadService(path);
 
             string appDirectory = AppDomain.CurrentDomain.BaseDirectory;
 
