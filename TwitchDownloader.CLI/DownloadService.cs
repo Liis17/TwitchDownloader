@@ -25,6 +25,26 @@ namespace TwitchDownloader.CLI
             DownloadStream(m3u8Url);
         }
 
+        public void StartAutoDownload(string link, string channelName)
+        {
+            if (link.Length == 0)
+            {
+                Console.WriteLine("Укажите ссылку на страницу видео Twitch в качестве параметра запуска.");
+                return;
+            }
+
+            string videoUrl = link;
+            string m3u8Url = GetM3u8Url(videoUrl);
+
+            if (string.IsNullOrEmpty(m3u8Url))
+            {
+                Console.WriteLine("На отслеживаемом канале не идет трансляция");
+                return;
+            }
+            Program.telegramService.SendMessage($"Обнаружена трансляция на канале {channelName}, начинается скачивание...");
+            DownloadStream(m3u8Url);
+        }
+
         private string GetM3u8Url(string videoUrl)
         {
             string m3u8Url = null;

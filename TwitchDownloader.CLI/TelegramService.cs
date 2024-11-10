@@ -64,8 +64,7 @@ namespace TwitchDownloader.CLI
                     {
                         if (Uri.IsWellFormedUriString(message.Text, UriKind.Absolute))
                         {
-                            await SaveLinkToDatabase(message.Text);
-                            await botClient.SendTextMessageAsync(message.Chat.Id, "⭐", cancellationToken: cancellationToken);
+                            await SaveVideo(message.Text);
                         }
                         else
                         {
@@ -122,9 +121,15 @@ namespace TwitchDownloader.CLI
             await botClient.SendTextMessageAsync(chatId, $"Сейчас {DateTime.Now}\n\nДля загрузки видео с Twitch нажми на кнопку ниже", replyMarkup: keyboard, cancellationToken: cancellationToken);
         }
 
-        private async Task SaveLinkToDatabase(string link)
+        private async Task SaveVideo(string link)
         {
+            SendMessage("Ожидайте...");
             Program.downloadService.StartDownload(link);
+        }
+
+        private async Task SaveAutoVideo(string link ,string channelName)
+        {
+            Program.downloadService.StartAutoDownload(link, channelName);
         }
 
         private Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
