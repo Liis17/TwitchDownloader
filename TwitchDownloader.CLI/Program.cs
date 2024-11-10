@@ -20,6 +20,10 @@ namespace TwitchDownloader.CLI
                     Console.ReadKey();
                     return;
                 }
+                else
+                {
+                    Console.WriteLine($"Путь для загрузки: {path}");
+                }
             }
             
             downloadService = new DownloadService(path);
