@@ -18,7 +18,7 @@ namespace TwitchDownloader.CLI
         {
             if (link.Length == 0)
             {
-                Console.WriteLine("Укажите ссылку на страницу видео Twitch в качестве параметра запуска.");
+                Console.WriteLine("Укажите ссылку на страницу видео Twitch");
                 return;
             }
 
@@ -28,7 +28,7 @@ namespace TwitchDownloader.CLI
             if (string.IsNullOrEmpty(m3u8Url))
             {
                 Console.WriteLine("Не удалось получить .m3u8 ссылку.");
-                Program.telegramService.SendMessage($"Не удалось получить .m3u8 ссылку.");
+                Program.TelegaSrv.SendMessage($"Не удалось получить .m3u8 ссылку.");
                 return;
             }
 
@@ -48,6 +48,12 @@ namespace TwitchDownloader.CLI
                     break;
                 case "ytdlp":
                     Downloadytdlp(link);
+                    break;
+                case "experemental":
+                    Downloadexperemental(m3u8Url);
+                    break;
+                case "experementalfixaudio":
+                    DownloadStreamWithAudio(m3u8Url);
                     break;
             }
         }
@@ -72,28 +78,11 @@ namespace TwitchDownloader.CLI
                 Console.WriteLine("На отслеживаемом канале не идет трансляция");
                 return;
             }
-            Program.telegramService.SendMessage($"Обнаружена трансляция на канале {channelName}, начинается скачивание...");
+            Program.TelegaSrv.SendMessage($"Обнаружена трансляция на канале {channelName}, начинается скачивание...");
             _trackableRecording = true;
-            switch (downloader)
-            {
-                case "defaultffmpeg":
-                    DownloadDefaultFFMPEG(m3u8Url, channelName);
-                    break;
-                case "ffmpegrw_timeout":
-                    Downloadffmpegrw_timeout(m3u8Url, channelName);
-                    break;
-                case "ffmpegbuffer":
-                    Downloadffmpegbuffer(m3u8Url, channelName);
-                    break;
-                case "ffmpegwallclock":
-                    Downloadffmpegwallclock(m3u8Url, channelName);
-                    break;
-                case "ytdlp":
-                    Downloadytdlp(link, channelName);
-                    break;
-            }
+            DownloadStreamWithAudio(m3u8Url, channelName);
             _trackableRecording = false;
-            Program.telegramService.SendMessage($"Трансляция {channelName} завершилась и была сохранена");
+            Program.TelegaSrv.SendMessage($"Трансляция {channelName} завершилась и была сохранена");
         }
 
         private string GetM3u8Url(string videoUrl)
@@ -153,7 +142,7 @@ namespace TwitchDownloader.CLI
             }
 
             Console.WriteLine($"Видео сохранено как {outputFileName}");
-            Program.telegramService.SendMessage($"Видео сохранено как \n\n{outputFileName}");
+            Program.TelegaSrv.SendMessage($"Видео сохранено как \n\n{outputFileName}");
         }
 
         private void Downloadffmpegrw_timeout(string m3u8Url, string filename = "twitch")
@@ -189,7 +178,7 @@ namespace TwitchDownloader.CLI
             }
 
             Console.WriteLine($"Видео сохранено как {outputFileName}");
-            Program.telegramService.SendMessage($"Видео сохранено как \n\n{outputFileName}");
+            Program.TelegaSrv.SendMessage($"Видео сохранено как \n\n{outputFileName}");
         }
 
         private void Downloadffmpegbuffer(string m3u8Url, string filename = "twitch")
@@ -225,7 +214,7 @@ namespace TwitchDownloader.CLI
             }
 
             Console.WriteLine($"Видео сохранено как {outputFileName}");
-            Program.telegramService.SendMessage($"Видео сохранено как \n\n{outputFileName}");
+            Program.TelegaSrv.SendMessage($"Видео сохранено как \n\n{outputFileName}");
 
 
 
@@ -264,7 +253,7 @@ namespace TwitchDownloader.CLI
             }
 
             Console.WriteLine($"Видео сохранено как {outputFileName}");
-            Program.telegramService.SendMessage($"Видео сохранено как \n\n{outputFileName}");
+            Program.TelegaSrv.SendMessage($"Видео сохранено как \n\n{outputFileName}");
         }
 
         private void Downloadytdlp(string link, string filename = "twitch")
@@ -300,7 +289,127 @@ namespace TwitchDownloader.CLI
             }
 
             Console.WriteLine($"Видео сохранено как {outputFileName}");
-            Program.telegramService.SendMessage($"Видео сохранено как \n\n{outputFileName}");
+            Program.TelegaSrv.SendMessage($"Видео сохранено как \n\n{outputFileName}");
+        }
+
+        public void StartStream(string videoUrl)
+        {
+            if (string.IsNullOrEmpty(videoUrl))
+            {
+                Console.WriteLine("Укажите ссылку на страницу видео Twitch.");
+                return;
+            }
+
+            string m3u8Url = GetM3u8Url(videoUrl);
+            if (string.IsNullOrEmpty(m3u8Url))
+            {
+                Console.WriteLine("Не удалось получить .m3u8 ссылку.");
+                return;
+            }
+
+            Console.WriteLine($"Ссылка на .m3u8 получена: {m3u8Url}");
+
+            ProcessStartInfo processInfo = new ProcessStartInfo
+            {
+                FileName = "ffplay",
+                Arguments = $"-i \"{m3u8Url}\"",
+                UseShellExecute = true 
+            };
+
+            using (Process process = new Process { StartInfo = processInfo })
+            {
+                Console.WriteLine("Открываю поток в плеере...");
+                process.Start();
+                process.WaitForExit();
+            }
+        }
+
+        private void Downloadexperemental(string m3u8Url, string filename = "twitch")
+        {
+            string SavePath = savePath;
+            if (savePath == string.Empty)
+            {
+                SavePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            }
+            Guid guid = Guid.NewGuid();
+            string outputFileName = Path.Combine(SavePath, $"{filename}_ffmpeg-experemental_{DateTime.Now.Hour}-{DateTime.Now.Minute}-{DateTime.Now.Second}_{guid.ToString().Substring(1, 4)}.mp4");  // Или ".mkv" если нужно
+
+            ProcessStartInfo processInfo = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = $"-fflags nobuffer -i \"{m3u8Url}\" -c copy -bsf:a aac_adtstoasc \"{outputFileName}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+
+            using (Process process = new Process { StartInfo = processInfo })
+            {
+                process.OutputDataReceived += (sender, e) => Console.WriteLine(e.Data);
+                process.ErrorDataReceived += (sender, e) => Console.WriteLine(e.Data);
+
+                Console.WriteLine("Начинаю загрузку...");
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                process.WaitForExit();
+            }
+
+            Console.WriteLine($"Видео сохранено как {outputFileName}");
+            Program.TelegaSrv.SendMessage($"Видео сохранено как \n\n{outputFileName}");
+        }
+
+        private void DownloadStreamWithAudio(string m3u8Url, string filename = "twitch")
+        {
+            string SavePath = savePath;
+            if (savePath == string.Empty)
+            {
+                SavePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            }
+            Guid guid = Guid.NewGuid();
+
+            string videoFileName = Path.Combine(SavePath, $"{filename}_video_{guid.ToString().Substring(0, 4)}.mp4");
+            string audioFileName1 = Path.Combine(SavePath, $"{filename}_audio_1_{guid.ToString().Substring(0, 4)}.aac");
+            string audioFileName2 = Path.Combine(SavePath, $"{filename}_audio_2_{guid.ToString().Substring(0, 4)}.aac");
+
+            Task.Run(() =>
+            {
+                StartProcess("ffmpeg", $"-i \"{m3u8Url}\" -c copy \"{videoFileName}\"", "Загрузка видео");
+            });
+
+            Task.Run(() =>
+            {
+                StartProcess("ffmpeg", $"-i \"{m3u8Url}\" -vn -acodec copy \"{audioFileName1}\"", "Загрузка аудио 1");
+            });
+
+            Task.Run(() =>
+            {
+                Thread.Sleep(1000); 
+                StartProcess("ffmpeg", $"-itsoffset 1 -i \"{m3u8Url}\" -vn -acodec copy \"{audioFileName2}\"", "Загрузка аудио 2");
+            });
+
+            Console.WriteLine("Запущены потоки для загрузки видео и аудио.");
+        }
+
+        private void StartProcess(string fileName, string arguments, string description)
+        {
+            ProcessStartInfo processInfo = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                RedirectStandardOutput = false, 
+                RedirectStandardError = false,
+                UseShellExecute = true,
+                CreateNoWindow = false
+            };
+
+            Console.WriteLine($"{description} начата...");
+            using (Process process = new Process { StartInfo = processInfo })
+            {
+                process.Start();
+            }
         }
     }
 }

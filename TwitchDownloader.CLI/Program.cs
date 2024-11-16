@@ -6,15 +6,18 @@ namespace TwitchDownloader.CLI
 {
     class Program
     {
-        public static TelegramService telegramService;
+        public static TelegramService TelegaSrv; //хуега блять
         public static DownloadService downloadService;
+        public static string path = string.Empty;
+
+
         static void Main(string[] args)
         {
-            var path = string.Empty;
+            var _path = string.Empty;
             if (args.Length != 0)
             {
-                path = args[0];
-                if (!Directory.Exists(path))
+                _path = args[0];
+                if (!Directory.Exists(_path))
                 {
                     Console.WriteLine("Указанный аргумент запуска не являектся существующим путем на диске!");
                     Console.ReadKey();
@@ -22,7 +25,8 @@ namespace TwitchDownloader.CLI
                 }
                 else
                 {
-                    Console.WriteLine($"Путь для загрузки: {path}");
+                    Console.WriteLine($"Путь для загрузки: {_path}");
+                    path = _path;
                 }
             }
             
@@ -30,14 +34,14 @@ namespace TwitchDownloader.CLI
 
             string appDirectory = AppDomain.CurrentDomain.BaseDirectory;
 
-            string tokenPath = Path.Combine(appDirectory, "token");
+            string tokenPath = Path.Combine(appDirectory, "token"); // по хорошему не так, но тут похуй
             string idPath = Path.Combine(appDirectory, "id");
 
             string token = File.ReadAllText(tokenPath);
             string id = File.ReadAllText(idPath);
-            telegramService = new TelegramService();
+            TelegaSrv = new TelegramService();
 
-            telegramService.StartBotAsync(token, id);
+            TelegaSrv.StartBotAsync(token, id);
 
             
             while (true) 

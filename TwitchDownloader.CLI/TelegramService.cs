@@ -21,6 +21,7 @@ namespace TwitchDownloader.CLI
         public long AdminId = 123;
         public TelegramBotClient botClient;
         private bool _waitingForLink = false;
+        private bool _waitingPlayer = false;
         private bool _waitingForChannel = false;
         private string _trackedChannel = null; // Отслеживаемый канал
         private readonly string _filePath = "trackable.user"; // Путь к файлу
@@ -86,12 +87,24 @@ namespace TwitchDownloader.CLI
                         await botClient.SendTextMessageAsync(message.Chat.Id, $"Канал {message.Text} добавлен в отслеживаемые.", cancellationToken: cancellationToken);
                         await ShowMainMenu(botClient, message.Chat.Id, cancellationToken);
                     }
+                    else if (_waitingPlayer)
+                    {
+                        if (Uri.IsWellFormedUriString(message.Text, UriKind.Absolute))
+                        {
+                            await PlayVideo(message.Text);
+                        }
+                        else
+                        {
+                            await botClient.SendTextMessageAsync(message.Chat.Id, "Некорректный формат ссылки. Попробуйте снова.", cancellationToken: cancellationToken);
+                        }
+                        _waitingPlayer = false;
+                    }
                 }
                 else
                 {
                     await botClient.SendTextMessageAsync(
                         message.Chat.Id,
-                        "Управление доступно только администратору.",
+                        "Управление ботом доступно только для его владельца!",
                         cancellationToken: cancellationToken
                     );
                 }
@@ -106,7 +119,24 @@ namespace TwitchDownloader.CLI
                     switch (callbackQuery.Data)
                     {
                         case "download":
-                            var buttons = new[]
+                            var downloaderbutton = new[]
+                                {
+                                new[]
+                                {
+                                    InlineKeyboardButton.WithCallbackData("🛠️ ffmpeg", "defaultffmpeg"),
+                                    InlineKeyboardButton.WithCallbackData("🛠️ ffmpeg + 🔊 audio", "experementalfixaudio")
+                                },
+                                new[]
+                                {
+                                    InlineKeyboardButton.WithCallbackData("Отменить", "cancel"),
+                                }
+                             };
+                            var downloaderkeyboard = new InlineKeyboardMarkup(downloaderbutton);
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Выберите загрузчик\n Для скачивания клипов и завершенных трансляций подходит [ ffmpeg ].\nДля активной трансляции [ ffmpeg + audio ] ", replyMarkup: downloaderkeyboard, cancellationToken: cancellationToken);
+                            break;
+
+                        case "otherdownloaders":
+                            var otherdownloaderbutton = new[]
                                 {
                                 new[]
                                 {
@@ -117,53 +147,72 @@ namespace TwitchDownloader.CLI
                                 new[]
                                 {
                                     InlineKeyboardButton.WithCallbackData("⏱️ ffmpeg с временным буфером", "ffmpegbuffer"),
-                                    InlineKeyboardButton.WithCallbackData("📝 ffmpeg с задержкой записи", "ffmpegwallclock")
+                                    InlineKeyboardButton.WithCallbackData("📝 ffmpeg с задержкой записи", "ffmpegwallclock"),
+                                    InlineKeyboardButton.WithCallbackData("🧪 experemental ffmpeg", "experemental")
+                                },
+                                new[]
+                                {
+                                    InlineKeyboardButton.WithCallbackData("🧪 exp ffmpeg fix audio", "experementalfixaudio")
                                 },
                                 new[]
                                 {
                                     InlineKeyboardButton.WithCallbackData("Отменить", "cancel"),
                                 }
                              };
-                            var keyboard = new InlineKeyboardMarkup(buttons);
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Выберите каким способом выполнить загрузку\nСтандартным и подходящим под большинство сценариев загрузки подходимт \"ffmpeg\", но загрузка активной трансляции таким способом может содержать прерывания звуковой дорожки, для загрузки активной трансляции используйте способы ниже.\n \n(их работоспособность не гарантированна так как не тестировалась на длительном сроке использовния) \n\nДля отмены нажми 'Отменить'.", replyMarkup: keyboard, cancellationToken: cancellationToken);
+                            var otherdownloaderkeyboard = new InlineKeyboardMarkup(otherdownloaderbutton);
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Выберите альтернативный загрузчик если другие не работают (не рекомендуется тут что то выбирать)", replyMarkup: otherdownloaderkeyboard, cancellationToken: cancellationToken);
                             break;
-
-
                         case "defaultffmpeg":
                             _waitingForLink = true;
                             downloader = "defaultffmpeg";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введи ссылку на видео Twitch. Для отмены нажми 'Отменить'.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
                             break;
                         case "ffmpegrw_timeout":
                             _waitingForLink = true;
                             downloader = "ffmpegrw_timeout";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введи ссылку на видео Twitch. Для отмены нажми 'Отменить'.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
                             break;
                         case "ffmpegbuffer":
                             _waitingForLink = true;
                             downloader = "ffmpegbuffer";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введи ссылку на видео Twitch. Для отмены нажми 'Отменить'.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
                             break;
                         case "ffmpegwallclock":
                             _waitingForLink = true;
                             downloader = "ffmpegwallclock";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введи ссылку на видео Twitch. Для отмены нажми 'Отменить'.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
                             break;
                         case "ytdlp":
                             _waitingForLink = true;
                             downloader = "ytdlp";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введи ссылку на видео Twitch. Для отмены нажми 'Отменить'.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                            break;
+                        case "experemental":
+                            _waitingForLink = true;
+                            downloader = "experemental";
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                            break;
+                        case "experementalfixaudio":
+                            _waitingForLink = true;
+                            downloader = "experementalfixaudio";
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                            break;
+
+                        case "open_player":
+                            _waitingPlayer = true;
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
                             break;
 
 
                         case "track_channel":
                             _waitingForChannel = true;
                             var cancelTrackKeyboard = new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("Отменить", "cancel"));
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введите имя канала Twitch (без ссылки). Для отмены нажмите 'Отменить'.", replyMarkup: cancelTrackKeyboard, cancellationToken: cancellationToken);
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введите имя канала Twitch (без ссылки). ", replyMarkup: cancelTrackKeyboard, cancellationToken: cancellationToken);
                             break;
                         case "cancel":
                             _waitingForLink = false;
                             _waitingForChannel = false;
+                            _waitingPlayer = false;
                             await ShowMainMenu(botClient, callbackQuery.Message.Chat.Id, cancellationToken);
                             break;
                     }
@@ -184,6 +233,10 @@ namespace TwitchDownloader.CLI
             {
                 InlineKeyboardButton.WithCallbackData("⬇️ Скачать", "download"),
                 InlineKeyboardButton.WithCallbackData("👁️ Отслеживать", "track_channel")
+            },
+            new[] 
+            {
+                InlineKeyboardButton.WithCallbackData("🎥 Открыть плеер", "open_player")
             }
         };
 
@@ -200,7 +253,12 @@ namespace TwitchDownloader.CLI
             var a = downloader;
             downloader = string.Empty;
             Program.downloadService.StartDownload(link, a);
-            
+        }
+        private async Task PlayVideo(string link)
+        {
+            SendMessage($"Открытие ffmpeg плеера на хост машине");
+            Program.downloadService.StartStream(link);
+
         }
 
         private async Task SaveAutoVideo(string link, string channelName)
