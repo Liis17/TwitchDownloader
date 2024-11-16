@@ -128,6 +128,10 @@ namespace TwitchDownloader.CLI
                                 },
                                 new[]
                                 {
+                                    InlineKeyboardButton.WithCallbackData("🤪 Больше вариантов", "otherdownloaders")
+                                },
+                                new[]
+                                {
                                     InlineKeyboardButton.WithCallbackData("Отменить", "cancel"),
                                 }
                              };
@@ -200,7 +204,7 @@ namespace TwitchDownloader.CLI
 
                         case "open_player":
                             _waitingPlayer = true;
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
+                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. \nНа хост машине быдет открыто окно ffplay", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
                             break;
 
 
