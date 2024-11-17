@@ -323,7 +323,7 @@ namespace TwitchDownloader.CLI
                     var link = $"https://twitch.tv/{_trackedChannel}";
                     Console.WriteLine($"Проверка {_trackedChannel} на наличие трансляции");
                     await SaveAutoVideo(link, _trackedChannel);
-                    await Task.Delay(TimeSpan.FromSeconds(15)); //2.5 мин блять
+                    await Task.Delay(TimeSpan.FromSeconds(60 + 60)); //2 мин блять
                 }
             });
         }
