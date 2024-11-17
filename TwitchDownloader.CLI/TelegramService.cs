@@ -80,7 +80,7 @@ namespace TwitchDownloader.CLI
                 {
                     if (message.Text == "/start")
                     {
-                        await ShowMainMenu(botClient, message.Chat.Id, cancellationToken);
+                        await ShowMainMenu(botClient, message.Chat.Id, cancellationToken, message.Chat.FirstName + " " + message.Chat.LastName);
                     }
                     else if (_waitingForLink)
                     {
@@ -99,7 +99,8 @@ namespace TwitchDownloader.CLI
                         _trackedChannel = message.Text;
                         SaveTrackedChannel(); 
                         _waitingForChannel = false;
-                        await botClient.SendTextMessageAsync(message.Chat.Id, $"Канал {message.Text} добавлен в отслеживаемые.", cancellationToken: cancellationToken);
+                        await botClient.SendTextMessageAsync(message.Chat.Id, $"Канал {message.Text} добавлен в отслеживаемые.", messageEffectId: "5046509860389126442", cancellationToken: cancellationToken);
+                        StartTrackingChannel();
                         await ShowMainMenu(botClient, message.Chat.Id, cancellationToken);
                     }
                     else if (_waitingPlayer)
@@ -110,9 +111,13 @@ namespace TwitchDownloader.CLI
                         }
                         else
                         {
-                            await botClient.SendTextMessageAsync(message.Chat.Id, "Некорректный формат ссылки. Попробуйте снова.", cancellationToken: cancellationToken);
+                            await botClient.SendTextMessageAsync(message.Chat.Id, "Некорректный формат ссылки.", cancellationToken: cancellationToken);
                         }
                         _waitingPlayer = false;
+                    }
+                    else 
+                    {
+                        await botClient.SendTextMessageAsync(message.Chat.Id, $"Что это ???\nСейчас я не жду от тебя этого:\n\n{message.Text}\n\nВыбери действие в /start\nИ действую по шагам что я спрошу!", cancellationToken: cancellationToken);
                     }
                 }
                 else
@@ -172,6 +177,10 @@ namespace TwitchDownloader.CLI
                                 new[]
                                 {
                                     InlineKeyboardButton.WithCallbackData("🧪 exp ffmpeg fix audio", "experementalfixaudio")
+                                },
+                                new[]
+                                {
+                                    InlineKeyboardButton.WithCallbackData("🎥 Открыть плеер", "open_player")
                                 },
                                 new[]
                                 {
@@ -239,12 +248,13 @@ namespace TwitchDownloader.CLI
             }
         }
 
-        public async void SendMessage(string text)
+        public async void SendMessage(string text, string EffectId = null)
         {
-            await botClient.SendTextMessageAsync(AdminId, text, cancellationToken: new CancellationToken());
+            await botClient.SendTextMessageAsync(AdminId, text, parseMode: ParseMode.Markdown, cancellationToken: new CancellationToken(), messageEffectId: EffectId);
         }
 
-        private async Task ShowMainMenu(ITelegramBotClient botClient, long chatId, CancellationToken cancellationToken)
+
+        private async Task ShowMainMenu(ITelegramBotClient botClient, long chatId, CancellationToken cancellationToken, string username = "")
         {
             var buttons = new[]
             {
@@ -252,10 +262,6 @@ namespace TwitchDownloader.CLI
             {
                 InlineKeyboardButton.WithCallbackData("⬇️ Скачать", "download"),
                 InlineKeyboardButton.WithCallbackData("👁️ Отслеживать", "track_channel")
-            },
-            new[] 
-            {
-                InlineKeyboardButton.WithCallbackData("🎥 Открыть плеер", "open_player")
             }
         };
 
@@ -263,7 +269,7 @@ namespace TwitchDownloader.CLI
             var trackingInfo = _trackedChannel != null
                 ? $"\n\nОтслеживаемый канал: {_trackedChannel}"
                 : "\n\nНет отслеживаемого канала.";
-            await botClient.SendTextMessageAsync(chatId, $"Сейчас {DateTime.Now}{trackingInfo}\n\nДля загрузки видео с Twitch нажми на кнопку ниже", replyMarkup: keyboard, cancellationToken: cancellationToken);
+            await botClient.SendTextMessageAsync(chatId, $"Привет {username}\n\nДля загрузки видео с Twitch нажми на кнопку ниже", replyMarkup: keyboard, cancellationToken: cancellationToken);
         }
 
         private async Task SaveVideo(string link)
@@ -282,7 +288,7 @@ namespace TwitchDownloader.CLI
 
         private async Task SaveAutoVideo(string link, string channelName)
         {
-            Program.downloadService.StartAutoDownload(link, "ytdlp", channelName); //заменить на работающий
+            Program.downloadService.StartAutoDownload(link, channelName); 
         }
 
         private async Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
@@ -317,7 +323,7 @@ namespace TwitchDownloader.CLI
                     var link = $"https://twitch.tv/{_trackedChannel}";
                     Console.WriteLine($"Проверка {_trackedChannel} на наличие трансляции");
                     await SaveAutoVideo(link, _trackedChannel);
-                    await Task.Delay(TimeSpan.FromMinutes(5));
+                    await Task.Delay(TimeSpan.FromSeconds(15)); //2.5 мин блять
                 }
             });
         }

@@ -58,7 +58,7 @@ namespace TwitchDownloader.CLI
             }
         }
 
-        public void StartAutoDownload(string link, string downloader, string channelName)
+        public void StartAutoDownload(string link, string channelName)
         {
 
             if (link.Length == 0)
@@ -70,6 +70,7 @@ namespace TwitchDownloader.CLI
             {
                 return;
             }
+            
             string videoUrl = link;
             string m3u8Url = GetM3u8Url(videoUrl);
 
@@ -78,11 +79,21 @@ namespace TwitchDownloader.CLI
                 Console.WriteLine("На отслеживаемом канале не идет трансляция");
                 return;
             }
+            if (_trackableRecording && m3u8Url != null)
+            {
+                Console.WriteLine("На отслеживаемом канале идет трансляция и она уже записывается");
+                return ;
+            }
+            else if(_trackableRecording && m3u8Url == null)
+            {
+                _trackableRecording = false;
+                Program.TelegaSrv.SendMessage($"Трансляция на канале {channelName} завершилась!", "5046509860389126442");
+                return;
+            }
             Program.TelegaSrv.SendMessage($"Обнаружена трансляция на канале {channelName}, начинается скачивание...");
             _trackableRecording = true;
             DownloadStreamWithAudio(m3u8Url, channelName);
-            _trackableRecording = false;
-            Program.TelegaSrv.SendMessage($"Трансляция {channelName} завершилась и была сохранена");
+            Program.TelegaSrv.SendMessage($"Когда трансляция на канале {channelName} будет завершена, я пришлю уведомление 🤪");
         }
 
         private string GetM3u8Url(string videoUrl)
