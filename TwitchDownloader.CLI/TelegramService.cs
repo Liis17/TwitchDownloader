@@ -270,10 +270,25 @@ namespace TwitchDownloader.CLI
             Program.downloadService.StartAutoDownload(link, "ytdlp", channelName); //заменить на работающий
         }
 
-        private Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
+        private async Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
         {
             Console.WriteLine($"Ошибка: {exception.Message}");
-            return Task.CompletedTask;
+
+            
+            if (exception is ApiRequestException apiException)
+            {
+                Console.WriteLine($"Telegram API Error: {apiException.ErrorCode} - {apiException.Message}");
+                if (apiException.ErrorCode == 502) 
+                {
+                    Console.WriteLine("Попытка переподключения...");
+                    await Task.Delay(5000);
+                }
+            }
+            else if (exception is TaskCanceledException)
+            {
+                Console.WriteLine("Соединение разорвано. Переподключение...");
+                await Task.Delay(5000);
+            }
         }
 
         private void StartTrackingChannel()
