@@ -40,19 +40,34 @@ namespace TwitchDownloader.CLI
             {
                 AllowedUpdates = Array.Empty<UpdateType>()
             };
-
-            botClient.StartReceiving(
-                HandleUpdateAsync,
-                HandleErrorAsync,
-                receiverOptions
-            );
-
-            var me = await botClient.GetMeAsync();
-            Console.WriteLine($"Запущен бот {me.Username}");
             StartTrackingChannel(); // Запуск задачи отслеживания канала
+            while (true)
+            {
+                try
+                {
+                    botClient.StartReceiving(
+                        HandleUpdateAsync,
+                        HandleErrorAsync,
+                        receiverOptions,
+                        cts.Token
+                    );
 
-            Console.ReadLine();
-            cts.Cancel();
+                    var me = await botClient.GetMeAsync();
+                    Console.WriteLine($"Запущен бот {me.Username}");
+
+                    Console.ReadLine();
+                    cts.Cancel();
+
+                    await Task.Delay(-1, cts.Token); // Ожидание завершения работы
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Критическая ошибка: {ex.Message}. Перезапуск через 5 секунд...");
+                    await Task.Delay(5000); // Задержка перед перезапуском
+                }
+            }
+
+            
         }
 
         private async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken cancellationToken)
