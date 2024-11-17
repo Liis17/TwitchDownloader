@@ -88,9 +88,10 @@ namespace TwitchDownloader.CLI
             {
                 _trackableRecording = false;
                 Program.TelegaSrv.SendMessage($"Трансляция на канале {channelName} завершилась!", "5046509860389126442");
+                Console.WriteLine("На отслеживаемом канале идет трансляция и она уже записывается");
                 return;
             }
-            Program.TelegaSrv.SendMessage($"Обнаружена трансляция на канале {channelName}, начинается скачивание...");
+            Program.TelegaSrv.SendMessage($"Трансляция на канале {channelName} завершилась!");
             _trackableRecording = true;
             DownloadStreamWithAudio(m3u8Url, channelName);
             Program.TelegaSrv.SendMessage($"Когда трансляция на канале {channelName} будет завершена, я пришлю уведомление 🤪");
