@@ -380,11 +380,11 @@ namespace TwitchDownloader.CLI
             {
                 SavePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
             }
-            Guid guid = Guid.NewGuid();
+            string guid = Guid.NewGuid().ToString().Replace("-","");
 
-            string videoFileName = Path.Combine(SavePath, $"{filename}_video_{guid.ToString().Substring(0, 4)}.mp4");
-            string audioFileName1 = Path.Combine(SavePath, $"{filename}_audio_1_{guid.ToString().Substring(0, 4)}.aac");
-            string audioFileName2 = Path.Combine(SavePath, $"{filename}_audio_2_{guid.ToString().Substring(0, 4)}.aac");
+            string videoFileName = Path.Combine(SavePath, $"{filename}_video_{guid.ToString().Substring(0, 6)}.mp4");
+            string audioFileName1 = Path.Combine(SavePath, $"{filename}_audio_1_{guid.ToString().Substring(0, 6)}.aac");
+            string audioFileName2 = Path.Combine(SavePath, $"{filename}_audio_2_{guid.ToString().Substring(0, 6)}.aac");
 
             Task.Run(() =>
             {
