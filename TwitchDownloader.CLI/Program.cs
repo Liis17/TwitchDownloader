@@ -1,55 +1,39 @@
-﻿using System.Diagnostics;
+﻿// Program.cs
+using System;
+using System.IO;
+using System.Security.Principal;
+using System.Threading;
 
-#pragma warning disable CS8618 
-
-namespace TwitchDownloader.CLI
+class Program
 {
-    class Program
+    public static DownloadService downloadService;
+    public static TelegramService telegramService;
+    static void Main(string[] args)
     {
-        public static TelegramService TelegaSrv; //хуега блять
-        public static DownloadService downloadService;
-        public static string path = string.Empty;
-
-
-        static void Main(string[] args)
+        if (!IsAdministrator())
         {
-            var _path = string.Empty;
-            if (args.Length != 0)
-            {
-                _path = args[0];
-                if (!Directory.Exists(_path))
-                {
-                    Console.WriteLine("Указанный аргумент запуска не являектся существующим путем на диске!");
-                    Console.ReadKey();
-                    return;
-                }
-                else
-                {
-                    Console.WriteLine($"Путь для загрузки: {_path}");
-                    path = _path;
-                }
-            }
-            
-            downloadService = new DownloadService(path);
+            Console.WriteLine("Требуются права администратора!");
+            return;
+        }
 
-            string appDirectory = AppDomain.CurrentDomain.BaseDirectory;
+        string savePath = args.Length > 0 ? args[0] : string.Empty;
+        downloadService = new DownloadService(savePath);
+        telegramService = new TelegramService(downloadService);
 
-            string tokenPath = Path.Combine(appDirectory, "token"); // по хорошему не так, но тут похуй
-            string idPath = Path.Combine(appDirectory, "id");
+        string token = File.ReadAllText("token");
+        string adminId = File.ReadAllText("id");
 
-            string token = File.ReadAllText(tokenPath);
-            string id = File.ReadAllText(idPath);
-            TelegaSrv = new TelegramService();
+        telegramService.StartBotAsync(token, adminId).Wait();
 
-            TelegaSrv.StartBotAsync(token, id);
+        Thread.Sleep(Timeout.Infinite);
+    }
 
-            
-            while (true) 
-            { 
-                Console.ReadLine();
-                Console.WriteLine("bruh");
-            }
-           
+    private static bool IsAdministrator()
+    {
+        using (var identity = WindowsIdentity.GetCurrent())
+        {
+            var principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
         }
     }
 }

@@ -1,344 +1,396 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
-using Telegram.Bot.Exceptions;
+using Telegram.Bot;
+using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
-using Telegram.Bot.Types;
-using Telegram.Bot;
-using Telegram.Bot.Polling;
-using System.Threading;
+
+using static Telegram.Bot.TelegramBotClient;
+
 using File = System.IO.File;
 
-namespace TwitchDownloader.CLI
+public class TelegramService
 {
-    public class TelegramService
+    private ITelegramBotClient _botClient;
+    private string _adminId;
+    private readonly DownloadService _downloadService;
+    private readonly List<string> _trackedChannels = new List<string>();
+    private readonly string _channelsFilePath;
+    private Dictionary<long, string> _pendingActions = new Dictionary<long, string>();
+
+    public TelegramService(DownloadService downloadService)
     {
-        private string BotToken = "123:abcd";
-        public long AdminId = 123;
-        public TelegramBotClient botClient;
-        private bool _waitingForLink = false;
-        private bool _waitingPlayer = false;
-        private bool _waitingForChannel = false;
-        private string _trackedChannel = null; // Отслеживаемый канал
-        private readonly string _filePath = "trackable.user"; // Путь к файлу
-        private string downloader = string.Empty;
+        _downloadService = downloadService;
+        _channelsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tracked_channels.txt");
+        LoadTrackedChannels();
+    }
 
-        public async Task StartBotAsync(string token, string id)
+    public async Task StartBotAsync(string token, string adminId)
+    {
+        _adminId = adminId;
+        _botClient = new TelegramBotClient(token);
+
+        var me = await _botClient.GetMeAsync();
+        Console.WriteLine($"Bot started: @{me.Username}");
+
+        _botClient.StartReceiving(UpdateHandler, ErrorHandler);
+
+        new Thread(MonitorChannels).Start();
+    }
+    private void LoadTrackedChannels()
+    {
+        try
         {
-            BotToken = token;
-            AdminId = int.Parse(id);
-
-            botClient = new TelegramBotClient(BotToken);
-            LoadTrackedChannel(); // Загрузка канала из файла при старте
-
-            using var cts = new CancellationTokenSource();
-            var receiverOptions = new ReceiverOptions
+            if (File.Exists(_channelsFilePath))
             {
-                AllowedUpdates = Array.Empty<UpdateType>()
-            };
-            StartTrackingChannel(); // Запуск задачи отслеживания канала
-            while (true)
+                _trackedChannels.Clear();
+                _trackedChannels.AddRange(File.ReadAllLines(_channelsFilePath)
+                    .Where(line => !string.IsNullOrWhiteSpace(line)));
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading channels: {ex.Message}");
+        }
+    }
+
+    private void SaveTrackedChannels()
+    {
+        try
+        {
+            File.WriteAllLines(_channelsFilePath, _trackedChannels);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving channels: {ex.Message}");
+        }
+    }
+
+    private void MonitorChannels()
+    {
+        while (true)
+        {
+            try
             {
-                try
+                foreach (var channel in _trackedChannels.ToList())
                 {
-                    botClient.StartReceiving(
-                        HandleUpdateAsync,
-                        HandleErrorAsync,
-                        receiverOptions,
-                        cts.Token
-                    );
-
-                    var me = await botClient.GetMeAsync();
-                    Console.WriteLine($"Запущен бот {me.Username}");
-
-                    Console.ReadLine();
-                    cts.Cancel();
-
-                    await Task.Delay(-1, cts.Token); // Ожидание завершения работы
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Критическая ошибка: {ex.Message}. Перезапуск через 5 секунд...");
-                    await Task.Delay(5000); // Задержка перед перезапуском
+                    if (!_downloadService.IsDownloading(channel))
+                    {
+                        try
+                        {
+                            var m3u8Url = GetM3u8Url($"https://twitch.tv/{channel}");
+                            if (!string.IsNullOrEmpty(m3u8Url))
+                            {
+                                Console.WriteLine($"[Monitor] Starting download for {channel}");
+                                _downloadService.DownloadStream(m3u8Url, channel, true);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[Monitor] Error for {channel}: {ex.Message}");
+                        }
+                    }
                 }
             }
-
-            
-        }
-
-        private async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken cancellationToken)
-        {
-            if (update.Type == UpdateType.Message && update.Message.Type == MessageType.Text)
+            catch (Exception ex)
             {
-                var message = update.Message;
+                Console.WriteLine($"[Monitor] Global error: {ex.Message}");
+            }
+            finally
+            {
+                Thread.Sleep(60000);
+            }
+        }
+    }
 
-                if (message.From.Id == AdminId)
+    private Task ErrorHandler(ITelegramBotClient bot, Exception exception, CancellationToken ct)
+    {
+        Console.WriteLine($"Telegram error: {exception.Message}");
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleTextCommand(Message message)
+    {
+        // Обработка текстовых команд, не попавших в другие обработчики
+        await _botClient.SendTextMessageAsync(message.Chat.Id, "Неизвестная команда");
+    }
+    private async Task UpdateHandler(ITelegramBotClient bot, Update update, CancellationToken ct)
+    {
+        try
+        {
+            if (update.Message?.Chat.Id.ToString() != _adminId && update.CallbackQuery?.From.Id.ToString() != _adminId)
+                return;
+
+            if (update.Type == UpdateType.CallbackQuery)
+            {
+                await HandleCallbackQuery(update.CallbackQuery);
+                return;
+            }
+
+            var message = update.Message;
+
+            if (_pendingActions.TryGetValue(message.Chat.Id, out var action))
+            {
+                await HandlePendingAction(message, action);
+                return;
+            }
+
+            switch (message.Text)
+            {
+                case "/start":
+                    await ShowMainMenu(message.Chat.Id);
+                    break;
+
+                default:
+                    await HandleTextCommand(message);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Update handler error: {ex.Message}");
+        }
+    }
+
+    private async Task HandleCallbackQuery(CallbackQuery callbackQuery)
+    {
+        var data = callbackQuery.Data;
+        var chatId = callbackQuery.Message.Chat.Id;
+
+        try
+        {
+            switch (data)
+            {
+                case "list_channels":
+                    await SendChannelList(chatId);
+                    break;
+
+                case "add_channel":
+                    _pendingActions[chatId] = "add_channel";
+                    await _botClient.SendTextMessageAsync(chatId, "Введите название канала:",
+                        replyMarkup: new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("Отмена", "cancel")));
+                    break;
+
+                case "remove_channel":
+                    await ShowChannelRemovalMenu(chatId);
+                    break;
+
+                case "download":
+                    await ShowDownloadOptions(chatId);
+                    break;
+
+                case "cancel":
+                    _pendingActions.Remove(chatId);
+                    await ShowMainMenu(chatId);
+                    break;
+
+                case "download_live":
+                case "download_archive":
+                    _pendingActions[chatId] = data;
+                    await _botClient.SendTextMessageAsync(chatId, "Отправьте ссылку на стрим:",
+                        replyMarkup: new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("Отмена", "cancel")));
+                    break;
+
+                case var s when s.StartsWith("remove:"):
+                    var channelToRemove = s.Split(':')[1];
+                    _trackedChannels.Remove(channelToRemove);
+                    SaveTrackedChannels();
+                    await _botClient.AnswerCallbackQueryAsync(callbackQuery.Id, $"Канал {channelToRemove} удален");
+                    await ShowMainMenu(chatId);
+                    break;
+
+                case var s when s.StartsWith("open:"):
+                    var path = s.Split(':')[1];
+                    Process.Start("explorer.exe", $"/select,\"{path.Replace("__","\\")}\"");
+                    await _botClient.AnswerCallbackQueryAsync(callbackQuery.Id);
+                    break;
+
+                case "ok":
+                    await _botClient.DeleteMessageAsync(chatId, callbackQuery.Message.MessageId);
+                    await ShowMainMenu(chatId);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Callback handler error: {ex.Message}");
+        }
+    }
+
+    private async Task HandlePendingAction(Message message, string action)
+    {
+        _pendingActions.Remove(message.Chat.Id);
+
+        switch (action)
+        {
+            case "add_channel":
+                if (!_trackedChannels.Contains(message.Text))
                 {
-                    if (message.Text == "/start")
-                    {
-                        await ShowMainMenu(botClient, message.Chat.Id, cancellationToken, message.Chat.FirstName + " " + message.Chat.LastName);
-                    }
-                    else if (_waitingForLink)
-                    {
-                        if (Uri.IsWellFormedUriString(message.Text, UriKind.Absolute))
-                        {
-                            await SaveVideo(message.Text);
-                        }
-                        else
-                        {
-                            await botClient.SendTextMessageAsync(message.Chat.Id, "Некорректный формат ссылки. Попробуйте снова.", cancellationToken: cancellationToken);
-                        }
-                        _waitingForLink = false;
-                    }
-                    else if (_waitingForChannel)
-                    {
-                        _trackedChannel = message.Text;
-                        SaveTrackedChannel(); 
-                        _waitingForChannel = false;
-                        await botClient.SendTextMessageAsync(message.Chat.Id, $"Канал {message.Text} добавлен в отслеживаемые.", messageEffectId: "5046509860389126442", cancellationToken: cancellationToken);
-                        StartTrackingChannel();
-                        await ShowMainMenu(botClient, message.Chat.Id, cancellationToken);
-                    }
-                    else if (_waitingPlayer)
-                    {
-                        if (Uri.IsWellFormedUriString(message.Text, UriKind.Absolute))
-                        {
-                            await PlayVideo(message.Text);
-                        }
-                        else
-                        {
-                            await botClient.SendTextMessageAsync(message.Chat.Id, "Некорректный формат ссылки.", cancellationToken: cancellationToken);
-                        }
-                        _waitingPlayer = false;
-                    }
-                    else 
-                    {
-                        await botClient.SendTextMessageAsync(message.Chat.Id, $"Что это ???\nСейчас я не жду от тебя этого:\n\n{message.Text}\n\nВыбери действие в /start\nИ действую по шагам что я спрошу!", cancellationToken: cancellationToken);
-                    }
+                    _trackedChannels.Add(message.Text);
+                    SaveTrackedChannels();
+                    await _botClient.SendTextMessageAsync(message.Chat.Id, $"Канал {message.Text} добавлен!");
+                }
+                await ShowMainMenu(message.Chat.Id);
+                break;
+
+            case "download_live":
+            case "download_archive":
+                var m3u8Url = GetM3u8Url(message.Text);
+                if (!string.IsNullOrEmpty(m3u8Url))
+                {
+                    _downloadService.DownloadStream(
+                        m3u8Url,
+                        Path.GetFileNameWithoutExtension(message.Text),
+                        withAudioOffset: action == "download_live"
+                    );
+                    await _botClient.SendTextMessageAsync(message.Chat.Id, "Загрузка начата!");
                 }
                 else
                 {
-                    await botClient.SendTextMessageAsync(
-                        message.Chat.Id,
-                        "Управление ботом доступно только для его владельца!",
-                        cancellationToken: cancellationToken
-                    );
+                    await _botClient.SendTextMessageAsync(message.Chat.Id, "Не удалось получить ссылку для скачивания");
                 }
-            }
-            else if (update.Type == UpdateType.CallbackQuery)
+                await ShowMainMenu(message.Chat.Id);
+                break;
+        }
+    }
+
+    public async void NotifyDownloadComplete(string channel, string filePath, string guid)
+    {
+        try
+        {
+            var keyboard = new InlineKeyboardMarkup(new[]
             {
-                var callbackQuery = update.CallbackQuery;
-
-                if (callbackQuery.From.Id == AdminId)
-                {
-                    var cancelKeyboard = new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("Отменить", "cancel"));
-                    switch (callbackQuery.Data)
-                    {
-                        case "download":
-                            var downloaderbutton = new[]
-                                {
-                                new[]
-                                {
-                                    InlineKeyboardButton.WithCallbackData("🛠️ ffmpeg", "defaultffmpeg"),
-                                    InlineKeyboardButton.WithCallbackData("🛠️ ffmpeg + 🔊 audio", "experementalfixaudio")
-                                },
-                                new[]
-                                {
-                                    InlineKeyboardButton.WithCallbackData("🤪 Больше вариантов", "otherdownloaders")
-                                },
-                                new[]
-                                {
-                                    InlineKeyboardButton.WithCallbackData("Отменить", "cancel"),
-                                }
-                             };
-                            var downloaderkeyboard = new InlineKeyboardMarkup(downloaderbutton);
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Выберите загрузчик\n Для скачивания клипов и завершенных трансляций подходит [ ffmpeg ].\nДля активной трансляции [ ffmpeg + audio ] ", replyMarkup: downloaderkeyboard, cancellationToken: cancellationToken);
-                            break;
-
-                        case "otherdownloaders":
-                            var otherdownloaderbutton = new[]
-                                {
-                                new[]
-                                {
-                                    InlineKeyboardButton.WithCallbackData("🛠️ ffmpeg", "defaultffmpeg"),
-                                    InlineKeyboardButton.WithCallbackData("⌛ ffmpeg с задержкой получения", "ffmpegrw_timeout"),
-                                    InlineKeyboardButton.WithCallbackData("🎬 yt-dlp", "ytdlp")
-                                },
-                                new[]
-                                {
-                                    InlineKeyboardButton.WithCallbackData("⏱️ ffmpeg с временным буфером", "ffmpegbuffer"),
-                                    InlineKeyboardButton.WithCallbackData("📝 ffmpeg с задержкой записи", "ffmpegwallclock"),
-                                    InlineKeyboardButton.WithCallbackData("🧪 experemental ffmpeg", "experemental")
-                                },
-                                new[]
-                                {
-                                    InlineKeyboardButton.WithCallbackData("🧪 exp ffmpeg fix audio", "experementalfixaudio")
-                                },
-                                new[]
-                                {
-                                    InlineKeyboardButton.WithCallbackData("🎥 Открыть плеер", "open_player")
-                                },
-                                new[]
-                                {
-                                    InlineKeyboardButton.WithCallbackData("Отменить", "cancel"),
-                                }
-                             };
-                            var otherdownloaderkeyboard = new InlineKeyboardMarkup(otherdownloaderbutton);
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Выберите альтернативный загрузчик если другие не работают (не рекомендуется тут что то выбирать)", replyMarkup: otherdownloaderkeyboard, cancellationToken: cancellationToken);
-                            break;
-                        case "defaultffmpeg":
-                            _waitingForLink = true;
-                            downloader = "defaultffmpeg";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
-                            break;
-                        case "ffmpegrw_timeout":
-                            _waitingForLink = true;
-                            downloader = "ffmpegrw_timeout";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
-                            break;
-                        case "ffmpegbuffer":
-                            _waitingForLink = true;
-                            downloader = "ffmpegbuffer";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
-                            break;
-                        case "ffmpegwallclock":
-                            _waitingForLink = true;
-                            downloader = "ffmpegwallclock";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
-                            break;
-                        case "ytdlp":
-                            _waitingForLink = true;
-                            downloader = "ytdlp";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
-                            break;
-                        case "experemental":
-                            _waitingForLink = true;
-                            downloader = "experemental";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
-                            break;
-                        case "experementalfixaudio":
-                            _waitingForLink = true;
-                            downloader = "experementalfixaudio";
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. Загрузчик {downloader}.", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
-                            break;
-
-                        case "open_player":
-                            _waitingPlayer = true;
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, $"Введи ссылку на видео Twitch. \nНа хост машине быдет открыто окно ffplay", replyMarkup: cancelKeyboard, cancellationToken: cancellationToken);
-                            break;
-
-
-                        case "track_channel":
-                            _waitingForChannel = true;
-                            var cancelTrackKeyboard = new InlineKeyboardMarkup(InlineKeyboardButton.WithCallbackData("Отменить", "cancel"));
-                            await botClient.SendTextMessageAsync(callbackQuery.Message.Chat.Id, "Введите имя канала Twitch (без ссылки). ", replyMarkup: cancelTrackKeyboard, cancellationToken: cancellationToken);
-                            break;
-                        case "cancel":
-                            _waitingForLink = false;
-                            _waitingForChannel = false;
-                            _waitingPlayer = false;
-                            await ShowMainMenu(botClient, callbackQuery.Message.Chat.Id, cancellationToken);
-                            break;
-                    }
-                }
-            }
-        }
-
-        public async void SendMessage(string text, string EffectId = null)
-        {
-            await botClient.SendTextMessageAsync(AdminId, text, parseMode: ParseMode.Markdown, cancellationToken: new CancellationToken(), messageEffectId: EffectId);
-        }
-
-
-        private async Task ShowMainMenu(ITelegramBotClient botClient, long chatId, CancellationToken cancellationToken, string username = "")
-        {
-            var buttons = new[]
-            {
-            new[]
-            {
-                InlineKeyboardButton.WithCallbackData("⬇️ Скачать", "download"),
-                InlineKeyboardButton.WithCallbackData("👁️ Отслеживать", "track_channel")
-            }
-        };
-
-            var keyboard = new InlineKeyboardMarkup(buttons);
-            var trackingInfo = _trackedChannel != null
-                ? $"\n\nОтслеживаемый канал: {_trackedChannel}"
-                : "\n\nНет отслеживаемого канала.";
-            await botClient.SendTextMessageAsync(chatId, $"Привет {username}\n\nДля загрузки видео с Twitch нажми на кнопку ниже", replyMarkup: keyboard, cancellationToken: cancellationToken);
-        }
-
-        private async Task SaveVideo(string link)
-        {
-            SendMessage($"Загрузка с помощью {downloader}, ожидайте...");
-            var a = downloader;
-            downloader = string.Empty;
-            Program.downloadService.StartDownload(link, a);
-        }
-        private async Task PlayVideo(string link)
-        {
-            SendMessage($"Открытие ffmpeg плеера на хост машине");
-            Program.downloadService.StartStream(link);
-
-        }
-
-        private async Task SaveAutoVideo(string link, string channelName)
-        {
-            Program.downloadService.StartAutoDownload(link, channelName); 
-        }
-
-        private async Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
-        {
-            Console.WriteLine($"Ошибка: {exception.Message}");
-
-            
-            if (exception is ApiRequestException apiException)
-            {
-                Console.WriteLine($"Telegram API Error: {apiException.ErrorCode} - {apiException.Message}");
-                if (apiException.ErrorCode == 502) 
-                {
-                    Console.WriteLine("Попытка переподключения...");
-                    await Task.Delay(5000);
-                }
-            }
-            else if (exception is TaskCanceledException)
-            {
-                Console.WriteLine("Соединение разорвано. Переподключение...");
-                await Task.Delay(5000);
-            }
-        }
-
-        private void StartTrackingChannel()
-        {
-            if (string.IsNullOrEmpty(_trackedChannel)) return;
-
-            Task.Run(async () =>
-            {
-                while (true)
-                {
-                    var link = $"https://twitch.tv/{_trackedChannel}";
-                    Console.WriteLine($"Проверка {_trackedChannel} на наличие трансляции");
-                    await SaveAutoVideo(link, _trackedChannel);
-                    await Task.Delay(TimeSpan.FromSeconds(60 + 60)); //2 мин блять
-                }
+                InlineKeyboardButton.WithCallbackData("Хорошо", "ok"),
             });
-        }
 
-        private void LoadTrackedChannel()
+            await _botClient.SendTextMessageAsync(_adminId,
+                $"✅ Скачивание {channel} завершено!\n\n 📁 Путь к скачаным файлам: ```Path\n{filePath.Replace($"{channel}_video_{guid}.mp4", "")}```\nФайлы этой записи:```Files\n{channel}_video_{guid}.mp4\n{channel}_audio1_{guid}.aac\n{channel}_audio2_{guid}.aac```",
+                /*replyMarkup: keyboard,*/ parseMode: ParseMode.Markdown);
+        }
+        catch (Exception ex)
         {
-            if (File.Exists(_filePath))
+            Console.WriteLine($"Notify error: {ex.Message}");
+        }
+    }
+
+    public async void NotifyDownloadStart(string channel, string filePath, string guid)
+    {
+        try
+        {
+            var keyboard = new InlineKeyboardMarkup(new[]
             {
-                _trackedChannel = File.ReadAllText(_filePath);
-            }
-        }
+                InlineKeyboardButton.WithCallbackData("Хорошо", "ok"),
+            });
 
-        private void SaveTrackedChannel()
-        {
-            File.WriteAllText(_filePath, _trackedChannel);
+            await _botClient.SendTextMessageAsync(_adminId,
+                $"🔔 На канале {channel} началась трансляция!\n\n" +
+                $"⬇️  Скачивание  началось!\n\n 📁 Запись будет сохранена по пути: ```Path\n{filePath.Replace($"{channel}_video_{guid}.mp4", "")}```\nФайлы этой записи:```Files\n{channel}_video_{guid}.mp4\n{channel}_audio1_{guid}.aac\n{channel}_audio2_{guid}.aac```",
+                /*replyMarkup: keyboard,*/ parseMode: ParseMode.Markdown);
         }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Notify error: {ex.Message}");
+        }
+    }
+
+    private string GetM3u8Url(string videoUrl)
+    {
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "yt-dlp",
+                    Arguments = $"-g \"{videoUrl}\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+
+            // Добавляем таймаут ожидания
+            if (!process.WaitForExit(15000))
+            {
+                process.Kill();
+                return null;
+            }
+
+            if (process.ExitCode != 0)
+            {
+                var error = process.StandardError.ReadToEnd();
+                Console.WriteLine($"yt-dlp error: {error}");
+                return null;
+            }
+
+            return process.StandardOutput.ReadLine()?.Trim();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"GetM3u8Url error: {ex.Message}");
+            return null;
+        }
+    }
+
+    private async Task SendChannelList(long chatId)
+    {
+        var message = _trackedChannels.Count > 0
+            ? "📡 Отслеживаемые каналы:\n" + string.Join("\n", _trackedChannels.Select((c, i) => $"{i + 1}. {c}"))
+            : "❌ Нет отслеживаемых каналов";
+
+        await _botClient.SendTextMessageAsync(chatId, message);
+        await ShowMainMenu(chatId);
+    }
+
+    private async Task ShowChannelRemovalMenu(long chatId)
+    {
+        var buttons = _trackedChannels
+            .Select(c => new[] { InlineKeyboardButton.WithCallbackData(c, $"remove:{c}") })
+            .ToList();
+
+        buttons.Add(new[] { InlineKeyboardButton.WithCallbackData("Назад", "cancel") });
+
+        await _botClient.SendTextMessageAsync(chatId, "Выберите канал для удаления:",
+            replyMarkup: new InlineKeyboardMarkup(buttons));
+    }
+
+    private async Task ShowDownloadOptions(long chatId)
+    {
+        var keyboard = new InlineKeyboardMarkup(new[]
+        {
+            new[] { InlineKeyboardButton.WithCallbackData("Активный стрим", "download_live") },
+            new[] { InlineKeyboardButton.WithCallbackData("Архивный стрим", "download_archive") },
+            new[] { InlineKeyboardButton.WithCallbackData("Отмена", "cancel") }
+        });
+
+        await _botClient.SendTextMessageAsync(chatId, "Выберите тип загрузки:", replyMarkup: keyboard);
+    }
+
+    private async Task ShowMainMenu(long chatId)
+    {
+        var statusMessage = _trackedChannels.Count > 0
+            ? string.Join("\n", _trackedChannels.Select(c => $"{c}: {(_downloadService.IsDownloading(c) ? "⏳ Скачивается" : "🕒 Ожидание")}"))
+            : "Нет активных загрузок";
+
+        var message = $"📺 Twitch Downloader Bot\n\nСтатус загрузок:\n{statusMessage}";
+
+        var keyboard = new InlineKeyboardMarkup(new[]
+        {
+            new[] { InlineKeyboardButton.WithCallbackData("📃 Список каналов", "list_channels") },
+            new[] { InlineKeyboardButton.WithCallbackData("➕ Добавить канал", "add_channel") },
+            new[] { InlineKeyboardButton.WithCallbackData("➖ Удалить канал", "remove_channel") },
+            new[] { InlineKeyboardButton.WithCallbackData("⏬ Скачать сейчас", "download") }
+        });
+
+        await _botClient.SendTextMessageAsync(chatId, message, replyMarkup: keyboard);
     }
 }
