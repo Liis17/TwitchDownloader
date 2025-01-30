@@ -23,14 +23,12 @@ public class DownloadService
 
     public void DownloadStream(string m3u8Url, string channelName, bool withAudioOffset = false)
     {
-        // Проверяем, не идет ли уже загрузка для этого канала
         if (_activeChannels.ContainsKey(channelName))
         {
             Console.WriteLine($"Загрузка для канала '{channelName}' уже выполняется.");
             return;
         }
 
-        // Добавляем канал в активные загрузки
         _activeChannels[channelName] = true;
 
         var guid = Guid.NewGuid().ToString("N");
@@ -102,7 +100,6 @@ public class DownloadService
                 Console.WriteLine($"[FFmpeg {type}] Процесс завершен с кодом {process.ExitCode}");
                 process.Dispose();
 
-                // Проверяем, остались ли активные процессы для этого канала
                 if (!_activeProcesses.Values.Any(p =>
                     !p.HasExited &&
                     p.StartInfo.Arguments.Contains($"\"{channel}_")))
