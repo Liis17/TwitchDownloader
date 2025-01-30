@@ -13,6 +13,7 @@ class Program
         if (!IsAdministrator())
         {
             Console.WriteLine("Требуются права администратора!");
+            Console.ReadKey();
             return;
         }
 
