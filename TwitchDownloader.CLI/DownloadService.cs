@@ -78,9 +78,9 @@ public class DownloadService
                 {
                     FileName = "ffmpeg",
                     Arguments = arguments,
-                    UseShellExecute = true, // Используем ShellExecute для видимого окна
-                    CreateNoWindow = false, // Окно будет видимым
-                    WindowStyle = ProcessWindowStyle.Normal // Обычное окно
+                    UseShellExecute = true, 
+                    CreateNoWindow = false, 
+                    WindowStyle = ProcessWindowStyle.Normal 
                 },
                 EnableRaisingEvents = true
             };
