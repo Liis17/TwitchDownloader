@@ -52,7 +52,7 @@ public class DownloadService
                 string audio2FileName = GenerateFileName(channel, "audio2", "aac", guid);
 
                 string audio1Args = $"-i \"{m3u8Url}\" -vn -acodec copy \"{audio1FileName}\"";
-                string audio2Args = $"-itsoffset 1 -i \"{m3u8Url}\" -vn -acodec copy \"{audio2FileName}\"";
+                string audio2Args = $"-i \"{m3u8Url}\" -vn -acodec copy \"{audio2FileName}\"";
 
                 StartProcess($"{guid}_a1", "audio1", audio1Args, channel);
                 Task.Delay(1000).ContinueWith(_ => StartProcess($"{guid}_a2", "audio2", audio2Args, channel));
