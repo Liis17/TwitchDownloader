@@ -1,5 +1,4 @@
-﻿// Program.cs
-using System;
+﻿using System;
 using System.IO;
 using System.Security.Principal;
 using System.Threading;
@@ -8,6 +7,7 @@ class Program
 {
     public static DownloadService downloadService;
     public static TelegramService telegramService;
+    public static ConverterService converterService;
     static void Main(string[] args)
     {
         if (!IsAdministrator())
@@ -19,6 +19,7 @@ class Program
         string savePath = args.Length > 0 ? args[0] : string.Empty;
         downloadService = new DownloadService(savePath);
         telegramService = new TelegramService(downloadService);
+        converterService = new ConverterService();
 
         string token = File.ReadAllText("token");
         string adminId = File.ReadAllText("id");

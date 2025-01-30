@@ -211,6 +211,11 @@ public class TelegramService
                     await _botClient.AnswerCallbackQueryAsync(callbackQuery.Id);
                     break;
 
+                case var s when s.StartsWith("convert:"):
+                    //var paths = s.Split(':')[0];
+                    Program.converterService.ConvertAndMergeAsync("","");
+                    break;
+
                 case "ok":
                     await _botClient.DeleteMessageAsync(chatId, callbackQuery.Message.MessageId);
                     await ShowMainMenu(chatId);
@@ -266,7 +271,7 @@ public class TelegramService
         {
             var keyboard = new InlineKeyboardMarkup(new[]
             {
-                InlineKeyboardButton.WithCallbackData("Хорошо", "ok"),
+                InlineKeyboardButton.WithCallbackData("📼 Конвертировать", "convert:"),
             });
 
             await _botClient.SendTextMessageAsync(_adminId,
