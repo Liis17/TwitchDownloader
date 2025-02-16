@@ -39,7 +39,8 @@ public class DownloadService
     {
         try
         {
-            string videoFileName = GenerateFileName(channel, "video", "mp4", guid);
+            // Изменено расширение файла на .ts
+            string videoFileName = GenerateFileName(channel, "video", "ts", guid);
             string videoArgs = $"-i \"{m3u8Url}\" -c copy \"{videoFileName}\"";
 
             StartProcess(guid, "video", videoArgs, channel, videoFileName);
