@@ -84,6 +84,7 @@ namespace TwitchDownloader2.CLI
                                 continue;
                             }
 
+                            ConsoleWriteLine($"Проверка стрима на канале '{channel}'");
                             bool isLive = IsChannelLive(channel, token);
                             if (isLive)
                             {

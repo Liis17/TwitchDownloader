@@ -14,6 +14,7 @@ namespace TwitchDownloader2.CLI
         public string TelegramToken { get; set; } = "";
         public long TelegramIdOwner { get; set; } = 0;
         public List<string> TrackedChannels { get; set; } = new List<string>();
+        public string DownloadPath { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads");
 
 
         // ==== Пути ====

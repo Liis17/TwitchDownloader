@@ -171,9 +171,7 @@ namespace TwitchDownloader2.CLI
                     }
                     if (message.Text.StartsWith("/start"))
                     {
-                        disableTriggers();
-                        await SendMessageAsync($"Привет, {message.Chat.FirstName} {message.Chat.LastName}", replyMarkup: GetMainKeyboard(), cancellationToken: token);
-                        await SendMessageAsync(MainPageString(), replyMarkup: GetMainKeyboard(), cancellationToken: token);
+                        _startMessage();
                         return;
                     }
                     if (message.Text == "➕ Добавить")
@@ -187,7 +185,7 @@ namespace TwitchDownloader2.CLI
                     {
                         disableTriggers();
                         _deleteChannelTrigger = true;
-                        await SendMessageAsync($"Напиши имя канала или ссылку на Twitch", replyMarkup: GetDynamicKeyboard(Program.Settings.TrackedChannels, "Вставить ссылку на Twitch сюда"), cancellationToken: token);
+                        await SendMessageAsync($"Напиши имя канала который хочешь удалить", replyMarkup: GetDynamicKeyboard(Program.Settings.TrackedChannels, "Можешь выбрать на кнопках ниже"), cancellationToken: token);
                         return;
                     }
                     if (message.Text == "📺 Каналы")
@@ -200,7 +198,8 @@ namespace TwitchDownloader2.CLI
                     }
                     if (message.Text == "🏠 Главная")
                     {
-
+                        _startMessage();
+                        return;
                     }
                     else if (message.Text == "/buttons")
                     {
@@ -219,6 +218,13 @@ namespace TwitchDownloader2.CLI
                     {
                         await SendMessageAsync($"Нет такой команды: <b>{message.Text}</b>", parseMode: ParseMode.Html, cancellationToken: token);
                     }
+                }
+
+                async void _startMessage()
+                {
+                    disableTriggers();
+                    await SendMessageAsync($"Привет, {message.Chat.FirstName} {message.Chat.LastName}", replyMarkup: GetMainKeyboard(), cancellationToken: token);
+                    await SendMessageAsync(MainPageString(), replyMarkup: GetMainKeyboard(), cancellationToken: token);
                 }
             }
             else if (update.CallbackQuery is { } callback)
