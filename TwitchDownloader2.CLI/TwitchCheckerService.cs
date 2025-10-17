@@ -52,6 +52,26 @@ namespace TwitchDownloader2.CLI
             }
         }
 
+        // Получить статусы всех отслеживаемых каналов
+        public IReadOnlyDictionary<string, bool> GetStatuses()
+        {
+            lock (_stateLock)
+            {
+                // Объединяем список отслеживаемых каналов и известные состояния
+                var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                var tracked = (Program.Settings?.TrackedChannels ?? new List<string>())
+                    .Where(c => !string.IsNullOrWhiteSpace(c))
+                    .Select(c => c.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var ch in tracked)
+                {
+                    result[ch] = _channelStates.TryGetValue(ch, out var st) && st.IsDownloading;
+                }
+                return result;
+            }
+        }
+
         private void WorkerLoop()
         {
             // Небольшая пауза на инициализацию остальных сервисов

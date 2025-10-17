@@ -25,15 +25,11 @@
             TelegramServiceInstance = new TelegramService(Settings.TelegramToken, Settings.TelegramIdOwner);
             TelegramServiceInstance.Start();
 
-            ConsoleWriteLine("Запуск TwitchChecker-сервиса...");
-
-            TwitchChecker = new TwitchCheckerService();
-
             ConsoleWriteLine("Запуск TwitchDownloader-сервиса...");
+            TwitchDownloader = new TwitchDownloaderService(Settings.DownloadPath);
 
-            TwitchDownloader = new TwitchDownloaderService();
-
-
+            ConsoleWriteLine("Запуск TwitchChecker-сервиса...");
+            TwitchChecker = new TwitchCheckerService();
 
             Exit();
         }
