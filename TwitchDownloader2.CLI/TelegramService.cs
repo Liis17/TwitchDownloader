@@ -201,22 +201,43 @@ namespace TwitchDownloader2.CLI
                         _startMessage();
                         return;
                     }
-                    else if (message.Text == "/buttons")
+                    if (message.Text == "🔁 Принудительно обновить")
                     {
-                        var buttons = new InlineKeyboardMarkup(new[]
-                        {
-                            new[]
-                            {
-                                InlineKeyboardButton.WithCallbackData("🧠 Инфо", "info"),
-                                InlineKeyboardButton.WithCallbackData("⚙ Настройки", "settings")
-                            }
-                        });
+                        Program.TwitchChecker.ForceCheck();
+                        await SendMessageAsync($"<b>Выполнено</b>", parseMode: ParseMode.Html, replyMarkup: GetMainKeyboard(), cancellationToken: token);
+                        return;
+                    }
+                    if (message.Text == "📜 Статус")
+                    {
+                        var list = Program.TwitchChecker.GetStatuses();
 
-                        await SendMessageAsync("Выберите опцию:", buttons, token);
+                        string text = "---- Статус отслеживаемых каналов ----\n\n";
+                        foreach (var channel in list)
+                        {
+                            var status = "";
+                            if (channel.Value)
+                            {
+                                status = "🔴";
+                            }
+                            else
+                            {
+                                status = "💤";
+                            }
+                            text += $"{status} {channel.Key}" + "\n";
+                        }
+
+                        await SendMessageAsync(text, replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                        return;
+                    }
+                    if (message.Text == "⬇️ Загрузить")
+                    {
+
+                        await SendMessageAsync("Выберите опцию:", GetDownloadKeyboard(), token, parseMode: ParseMode.Html);
+                        return;
                     }
                     else
                     {
-                        await SendMessageAsync($"Нет такой команды: <b>{message.Text}</b>", parseMode: ParseMode.Html, cancellationToken: token);
+                        await SendMessageAsync($"Нет такой команды: <b>{message.Text}</b>", replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
                     }
                 }
 
@@ -266,6 +287,22 @@ namespace TwitchDownloader2.CLI
         /// Пример клавиатуры под полем ввода текста.
         /// </summary>
         private static ReplyKeyboardMarkup GetMainKeyboard(string placeholder = "Используй кнопки ниже")
+        {
+            return new ReplyKeyboardMarkup(new[]
+            {
+                new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
+                new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
+                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
+                new KeyboardButton[] { "🔁 Принудительно обновить" }
+            })
+            {
+                InputFieldPlaceholder = placeholder,
+                IsPersistent = true,
+                ResizeKeyboard = true,
+                OneTimeKeyboard = false
+            };
+        }
+        private static ReplyKeyboardMarkup GetDownloadKeyboard(string placeholder = "Используй кнопки ниже")
         {
             return new ReplyKeyboardMarkup(new[]
             {
