@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace TwitchDownloader2.CLI
@@ -36,7 +37,6 @@ namespace TwitchDownloader2.CLI
             var sessionCode = GenerateCode(6);
             ConsoleWriteLine($"Старт загрузки канала '{channel}' (сессия {sessionCode})");
 
-            // Получаем прямой HLS URL через yt-dlp и отдаём его ffmpeg
             var hlsUrl = ResolveHlsUrl(channel);
             if (string.IsNullOrWhiteSpace(hlsUrl))
             {
@@ -73,7 +73,49 @@ namespace TwitchDownloader2.CLI
                 var waits = processes.Where(p => p != null).Select(p => Task.Run(() => { try { p.WaitForExit(); } catch { } })).ToArray();
                 try { Task.WaitAll(waits); } catch { }
 
-                ConsoleWriteLine($"Завершена загрузка всех потоков для канала '{channel}'");
+                // Проверка хешей аудио и видео
+                bool audioEqual = FilesEqualByHash(fileAudio1, fileAudio2);
+                bool videoEqual = FilesEqualByHash(fileVideo1, fileVideo2);
+                if (!audioEqual || !videoEqual)
+                {
+                    throw new Exception("E56");
+                }
+
+                // Удаляем дубли с номером 1
+                SafeDelete(fileAudio1);
+                SafeDelete(fileVideo1);
+
+                // Готовим временную папку на основе кода из имени видео-файла №2
+                var code = ExtractCodeFromFilename(Path.GetFileNameWithoutExtension(fileVideo2));
+                var outDir = Path.GetDirectoryName(fileVideo2) ?? _downloadRoot;
+                var tempDir = Path.Combine(outDir, $"temp_{code}");
+                Directory.CreateDirectory(tempDir);
+
+                // 1) Конвертируем аудио в mp3
+                var tempAudioMp3 = Path.Combine(tempDir, "audio.mp3");
+                RunFfmpegBlocking($"-i \"{fileAudio2}\" -q:a 0 -map a \"{tempAudioMp3}\"", "Конвертация аудио в mp3 завершена.");
+
+                // 2) Удаляем звук из видео и кладём в mp4 контейнер
+                var tempVideoNoAudio = Path.Combine(tempDir, "video_no_audio.mp4");
+                RunFfmpegBlocking($"-i \"{fileVideo2}\" -an -vcodec copy \"{tempVideoNoAudio}\"", "Видео без аудио подготовлено.");
+
+                // 3) Объединяем в финальный файл
+                var baseName = Path.GetFileNameWithoutExtension(fileVideo2);
+                var outputFile = Path.Combine(outDir, $"{baseName}_final.mp4");
+                RunFfmpegBlocking($"-i \"{tempVideoNoAudio}\" -i \"{tempAudioMp3}\" -c:v copy -c:a aac -strict experimental \"{outputFile}\"", "Финальный файл собран.");
+
+                // Удаляем временную папку
+                try { Directory.Delete(tempDir, true); } catch { }
+
+                // Удаляем оставшиеся исходники (#2)
+                SafeDelete(fileAudio2);
+                SafeDelete(fileVideo2);
+
+                // Проверяем целостность выходного файла блоками по 4Кб
+                VerifyFileReadable(outputFile, 4096);
+
+                // Выброс исключения с путем к финальному файлу
+                throw new Exception(outputFile);
             }
             catch (Exception ex)
             {
@@ -84,6 +126,49 @@ namespace TwitchDownloader2.CLI
                 try { Program.TwitchChecker?.MarkDownloadFinished(channel); } catch { }
                 foreach (var p in processes) { try { p?.Dispose(); } catch { } }
             }
+        }
+
+        private static string ExtractCodeFromFilename(string fileNameNoExt)
+        {
+            // Ожидаем формат: channel_video_2_CODE
+            var parts = fileNameNoExt.Split('_');
+            if (parts.Length >= 4) return parts[^1];
+            return GenerateFallbackCode();
+        }
+
+        private static string GenerateFallbackCode()
+        {
+            const string alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            var rnd = new Random();
+            Span<char> buf = stackalloc char[6];
+            for (int i = 0; i < buf.Length; i++) buf[i] = alphabet[rnd.Next(alphabet.Length)];
+            return new string(buf);
+        }
+
+        private static void VerifyFileReadable(string path, int blockSize)
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var buffer = new byte[blockSize];
+            int read;
+            long total = 0;
+            while ((read = fs.Read(buffer, 0, buffer.Length)) > 0) total += read;
+            if (total == 0) throw new IOException("Пустой файл результата");
+        }
+
+        private static bool FilesEqualByHash(string path1, string path2)
+        {
+            if (!File.Exists(path1) || !File.Exists(path2)) return false;
+            using var sha = SHA256.Create();
+            using var f1 = new FileStream(path1, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var f2 = new FileStream(path2, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var h1 = sha.ComputeHash(f1);
+            var h2 = sha.ComputeHash(f2);
+            return h1.AsSpan().SequenceEqual(h2);
+        }
+
+        private static void SafeDelete(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
 
         private string ResolveHlsUrl(string channel)
@@ -123,6 +208,36 @@ namespace TwitchDownloader2.CLI
             {
                 ConsoleWriteLine($"Ошибка запуска yt-dlp: {ex.Message}", ConsoleColor.DarkRed);
                 return string.Empty;
+            }
+        }
+
+        private void RunFfmpegBlocking(string args, string successLog)
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = args,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+
+            using var p = new Process { StartInfo = psi };
+            p.Start();
+            string stdout = p.StandardOutput.ReadToEnd();
+            string stderr = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+
+            if (p.ExitCode != 0)
+            {
+                throw new Exception($"ffmpeg exit {p.ExitCode}: {stderr}");
+            }
+            else
+            {
+                ConsoleWriteLine(successLog);
             }
         }
 
