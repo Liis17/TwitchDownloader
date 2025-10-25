@@ -320,7 +320,12 @@ namespace TwitchDownloader2.CLI
                 replyMarkup: replyMarkup,
                 cancellationToken: cancellationToken,
                 linkPreviewOptions: linkPreview
-                );
+            );
+        }
+
+        public async Task SendNotification(string text)
+        {
+            await SendMessageAsync(text, parseMode: ParseMode.Html);
         }
 
         /// <summary>

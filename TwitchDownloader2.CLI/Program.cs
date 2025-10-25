@@ -20,8 +20,6 @@
 
             SettingsChecker();
 
-            Settings.DownloadPath = "C:\\Users\\daske\\Desktop\\testvideo";
-
             ConsoleWriteLine("Запуск Telegram-сервиса...");
 
             TelegramServiceInstance = new TelegramService(Settings.TelegramToken, Settings.TelegramIdOwner);

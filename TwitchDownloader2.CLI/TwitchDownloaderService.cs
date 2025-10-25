@@ -37,6 +37,26 @@ namespace TwitchDownloader2.CLI
             var sessionCode = GenerateCode(6);
             ConsoleWriteLine($"Старт загрузки канала '{channel}' (сессия {sessionCode})");
 
+            var message = $"" +
+            $"✨ У <b>{channel}</b> началась транслиция!\n" +
+            $"\n" +
+            $"⬇️  Скачивание запущено!\n" +
+            $"\n" +
+            $"🔔 По завершению стрима придет уведомление";
+            Program.TelegramServiceInstance.SendNotification(message);
+            Thread.Sleep(1000);
+            var path = Program.Settings.DownloadPath;
+            var message2 = $"" +
+                $"📂 <b>Файлы этой транцляции:</b>\n" +
+                $"<pre>🎞️ {path}\\{channel}_video_1_{sessionCode}.ts\n" +
+                $"🎞️ {path}\\{channel}_video_2_{sessionCode}.ts\n" +
+                $"🎵 {path}\\{channel}_audio_1_{sessionCode}.aac\n" +
+                $"🎵 {path}\\{channel}_audio_2_{sessionCode}.aac</pre>\n\n" +
+                $"<b>После успешной загрузки будет перекодирован в:</b>\n" +
+                $"<pre>🎞️ {path}\\{channel}_video_2_{sessionCode}_final.mp4</pre>";
+
+            Program.TelegramServiceInstance.SendNotification(message2);
+
             var hlsUrl = ResolveHlsUrl(channel);
             if (string.IsNullOrWhiteSpace(hlsUrl))
             {
@@ -78,6 +98,7 @@ namespace TwitchDownloader2.CLI
                 bool videoEqual = FilesEqualByHash(fileVideo1, fileVideo2);
                 if (!audioEqual || !videoEqual)
                 {
+                    Program.TelegramServiceInstance.SendNotification("Автоконвертация была пропущена, файлы аудио или видео не идентичны друг другу, требуется ручное объединение");
                     throw new Exception("E56");
                 }
 
