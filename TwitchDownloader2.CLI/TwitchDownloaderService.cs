@@ -70,7 +70,7 @@ namespace TwitchDownloader2.CLI
             string fileAudio1 = Path.Combine(_downloadRoot, $"{channel}_audio_1_{sessionCode}.aac");
             string fileAudio2 = Path.Combine(_downloadRoot, $"{channel}_audio_2_{sessionCode}.aac");
 
-            var worker = new Thread(() => RunDownloadSession(channel, hlsUrl, fileVideo1, fileVideo2, fileAudio1, fileAudio2))
+            var worker = new Thread(() => RunDownloadSession(channel, sessionCode, hlsUrl, fileVideo1, fileVideo2, fileAudio1, fileAudio2))
             {
                 IsBackground = true,
                 Name = $"DL-{channel}-{sessionCode}"
@@ -78,7 +78,7 @@ namespace TwitchDownloader2.CLI
             worker.Start();
         }
 
-        private void RunDownloadSession(string channel, string hlsUrl, string fileVideo1, string fileVideo2, string fileAudio1, string fileAudio2)
+        private void RunDownloadSession(string channel, string sessionCode, string hlsUrl, string fileVideo1, string fileVideo2, string fileAudio1, string fileAudio2)
         {
             var processes = new List<Process>();
             try
@@ -96,41 +96,66 @@ namespace TwitchDownloader2.CLI
                 // Проверка хешей аудио и видео
                 bool audioEqual = FilesEqualByHash(fileAudio1, fileAudio2);
                 bool videoEqual = FilesEqualByHash(fileVideo1, fileVideo2);
-                if (!audioEqual || !videoEqual)
+
+                string outputFile;
+                if (audioEqual && videoEqual)
                 {
-                    Program.TelegramServiceInstance.SendNotification("Автоконвертация была пропущена, файлы аудио или видео не идентичны друг другу, требуется ручное объединение");
-                    throw new Exception("E56");
+                    // Идентичные: удаляем аудио1/видео1 и собираем из пары #2; затем чистим всё
+                    SafeDelete(fileAudio1);
+                    SafeDelete(fileVideo1);
+
+                    var outDir = Path.GetDirectoryName(fileVideo2) ?? _downloadRoot;
+                    var tempDir = Path.Combine(outDir, $"temp_{sessionCode}");
+                    Directory.CreateDirectory(tempDir);
+
+                    var tempAudioMp3 = Path.Combine(tempDir, "audio.mp3");
+                    RunFfmpegBlocking($"-i \"{fileAudio2}\" -q:a 0 -map a \"{tempAudioMp3}\"", "Конвертация аудио в mp3 завершена.");
+
+                    var tempVideoNoAudio = Path.Combine(tempDir, "video_no_audio.mp4");
+                    RunFfmpegBlocking($"-i \"{fileVideo2}\" -an -vcodec copy \"{tempVideoNoAudio}\"", "Видео без аудио подготовлено.");
+
+                    var baseName = Path.GetFileNameWithoutExtension(fileVideo2);
+                    outputFile = Path.Combine(outDir, $"{baseName}_final.mp4");
+                    RunFfmpegBlocking($"-i \"{tempVideoNoAudio}\" -i \"{tempAudioMp3}\" -c:v copy -c:a aac -strict experimental \"{outputFile}\"", "Финальный файл собран.");
+
+                    // Удаляем временную папку
+                    try { Directory.Delete(tempDir, true); } catch { }
+
+                    // Удаляем оставшиеся исходники (#2)
+                    SafeDelete(fileAudio2);
+                    SafeDelete(fileVideo2);
                 }
+                else
+                {
+                    // Разные: берём самые большие файлы по размеру, собираем, не удаляем исходники, а после перенесём их в папку sessionCode
+                    string bestAudio = PickLargest(fileAudio1, fileAudio2);
+                    string bestVideo = PickLargest(fileVideo1, fileVideo2);
 
-                // Удаляем дубли с номером 1
-                SafeDelete(fileAudio1);
-                SafeDelete(fileVideo1);
+                    var outDir = Path.GetDirectoryName(bestVideo) ?? _downloadRoot;
+                    var tempDir = Path.Combine(outDir, $"temp_{sessionCode}");
+                    Directory.CreateDirectory(tempDir);
 
-                // Готовим временную папку на основе кода из имени видео-файла №2
-                var code = ExtractCodeFromFilename(Path.GetFileNameWithoutExtension(fileVideo2));
-                var outDir = Path.GetDirectoryName(fileVideo2) ?? _downloadRoot;
-                var tempDir = Path.Combine(outDir, $"temp_{code}");
-                Directory.CreateDirectory(tempDir);
+                    var tempAudioMp3 = Path.Combine(tempDir, "audio.mp3");
+                    RunFfmpegBlocking($"-i \"{bestAudio}\" -q:a 0 -map a \"{tempAudioMp3}\"", "Конвертация аудио в mp3 завершена.");
 
-                // 1) Конвертируем аудио в mp3
-                var tempAudioMp3 = Path.Combine(tempDir, "audio.mp3");
-                RunFfmpegBlocking($"-i \"{fileAudio2}\" -q:a 0 -map a \"{tempAudioMp3}\"", "Конвертация аудио в mp3 завершена.");
+                    var tempVideoNoAudio = Path.Combine(tempDir, "video_no_audio.mp4");
+                    RunFfmpegBlocking($"-i \"{bestVideo}\" -an -vcodec copy \"{tempVideoNoAudio}\"", "Видео без аудио подготовлено.");
 
-                // 2) Удаляем звук из видео и кладём в mp4 контейнер
-                var tempVideoNoAudio = Path.Combine(tempDir, "video_no_audio.mp4");
-                RunFfmpegBlocking($"-i \"{fileVideo2}\" -an -vcodec copy \"{tempVideoNoAudio}\"", "Видео без аудио подготовлено.");
+                    var baseName = Path.GetFileNameWithoutExtension(bestVideo);
+                    outputFile = Path.Combine(outDir, $"{baseName}_final.mp4");
+                    RunFfmpegBlocking($"-i \"{tempVideoNoAudio}\" -i \"{tempAudioMp3}\" -c:v copy -c:a aac -strict experimental \"{outputFile}\"", "Финальный файл собран.");
 
-                // 3) Объединяем в финальный файл
-                var baseName = Path.GetFileNameWithoutExtension(fileVideo2);
-                var outputFile = Path.Combine(outDir, $"{baseName}_final.mp4");
-                RunFfmpegBlocking($"-i \"{tempVideoNoAudio}\" -i \"{tempAudioMp3}\" -c:v copy -c:a aac -strict experimental \"{outputFile}\"", "Финальный файл собран.");
+                    // Удаляем временную папку
+                    try { Directory.Delete(tempDir, true); } catch { }
 
-                // Удаляем временную папку
-                try { Directory.Delete(tempDir, true); } catch { }
-
-                // Удаляем оставшиеся исходники (#2)
-                SafeDelete(fileAudio2);
-                SafeDelete(fileVideo2);
+                    // Переносим все исходники в папку sessionCode
+                    var sessionDir = Path.Combine(_downloadRoot, sessionCode);
+                    try { Directory.CreateDirectory(sessionDir); } catch { }
+                    MoveIfExists(fileAudio1, Path.Combine(sessionDir, Path.GetFileName(fileAudio1)));
+                    MoveIfExists(fileAudio2, Path.Combine(sessionDir, Path.GetFileName(fileAudio2)));
+                    MoveIfExists(fileVideo1, Path.Combine(sessionDir, Path.GetFileName(fileVideo1)));
+                    MoveIfExists(fileVideo2, Path.Combine(sessionDir, Path.GetFileName(fileVideo2)));
+                }
 
                 // Проверяем целостность выходного файла блоками по 4Кб
                 VerifyFileReadable(outputFile, 4096);
@@ -149,21 +174,16 @@ namespace TwitchDownloader2.CLI
             }
         }
 
-        private static string ExtractCodeFromFilename(string fileNameNoExt)
+        private static string PickLargest(string path1, string path2)
         {
-            // Ожидаем формат: channel_video_2_CODE
-            var parts = fileNameNoExt.Split('_');
-            if (parts.Length >= 4) return parts[^1];
-            return GenerateFallbackCode();
+            long s1 = SafeLength(path1);
+            long s2 = SafeLength(path2);
+            return s2 > s1 ? path2 : path1;
         }
 
-        private static string GenerateFallbackCode()
+        private static long SafeLength(string path)
         {
-            const string alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-            var rnd = new Random();
-            Span<char> buf = stackalloc char[6];
-            for (int i = 0; i < buf.Length; i++) buf[i] = alphabet[rnd.Next(alphabet.Length)];
-            return new string(buf);
+            try { return new FileInfo(path).Length; } catch { return -1; }
         }
 
         private static void VerifyFileReadable(string path, int blockSize)
@@ -185,6 +205,11 @@ namespace TwitchDownloader2.CLI
             var h1 = sha.ComputeHash(f1);
             var h2 = sha.ComputeHash(f2);
             return h1.AsSpan().SequenceEqual(h2);
+        }
+
+        private static void MoveIfExists(string src, string dst)
+        {
+            try { if (File.Exists(src)) File.Move(src, dst, overwrite: true); } catch { }
         }
 
         private static void SafeDelete(string path)
