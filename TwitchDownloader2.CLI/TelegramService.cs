@@ -16,6 +16,7 @@ namespace TwitchDownloader2.CLI
 
         private bool _addChannelTrigger = false;
         private bool _deleteChannelTrigger = false;
+        private bool _editDownloadPathTrigger = false;
 
         #region Служебные методы
         public TelegramService(string token, long ownerId)
@@ -109,6 +110,7 @@ namespace TwitchDownloader2.CLI
         {
             _addChannelTrigger = false;
             _deleteChannelTrigger = false;
+            _editDownloadPathTrigger = false;
         }
         private async Task HandleUpdateAsync(ITelegramBotClient bot, Update update, CancellationToken token)
         {
@@ -135,7 +137,7 @@ namespace TwitchDownloader2.CLI
                     if (message.Text == "❌ Отменить действие")
                     {
                         disableTriggers();
-                        await SendMessageAsync($"❌ <b>Действие отменено</b>", replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                        await SendMessageAsync($"❌ <b>Действие отменено</b>", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
                         return;
                     }
                     if (!string.IsNullOrEmpty(message.Text))
@@ -144,28 +146,44 @@ namespace TwitchDownloader2.CLI
                         {
                             if (Program.Settings.TrackedChannels.Contains(ExtractChannelName(message.Text.Replace(" ", "").ToLower())))
                             {
-                                await SendMessageAsync($"⚠️ Канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> уже был добавлен ранее", replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                                await SendMessageAsync($"⚠️ Канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> уже был добавлен ранее", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
                                 disableTriggers();
                                 return;
                             }
                             Program.Settings.TrackedChannels.Add(ExtractChannelName(message.Text.Replace(" ", "").ToLower()));
                             Program.Settings.Save();
                             disableTriggers();
-                            await SendMessageAsync($"✨ Канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> добавлен в отслеживаемые", replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                            await SendMessageAsync($"✨ Канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> добавлен в отслеживаемые", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
                             return;
                         }
                         if (_deleteChannelTrigger)
                         {
                             if (!Program.Settings.TrackedChannels.Contains(ExtractChannelName(message.Text.Replace(" ", "").ToLower())))
                             {
-                                await SendMessageAsync($"⚠️ Такой канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> отсутствует", replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                                await SendMessageAsync($"⚠️ Такой канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> отсутствует", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
                                 disableTriggers();
                                 return;
                             }
                             Program.Settings.TrackedChannels.Remove(message.Text.Replace(" ", ""));
                             Program.Settings.Save();
                             disableTriggers();
-                            await SendMessageAsync($"🗑️ Канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> удален", replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                            await SendMessageAsync($"🗑️ Канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> удален", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                            return;
+                        }
+                        if (_editDownloadPathTrigger)
+                        {
+                            if (!Directory.Exists(message.Text))
+                            {
+                                await SendMessageAsync($"❌ Такой путь не найден", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                            }
+                            else
+                            {
+                                Program.Settings.DownloadPath = message.Text;
+                                await SendMessageAsync($"✨ Путь изменен", replyMarkup: Keyboards.GetPathEditKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                                var path = Program.Settings.DownloadPath.Replace(@"\", @"\\");
+                                await SendMessageAsync($"**📂 Папка загрузки**\n\nСейчас загрузка происходит в папку по такому пути:\n```path\n{path}```", Keyboards.GetEditPathButton(), token, parseMode: ParseMode.MarkdownV2);
+                            }
+                            disableTriggers();
                             return;
                         }
                     }
@@ -178,25 +196,25 @@ namespace TwitchDownloader2.CLI
                     {
                         disableTriggers();
                         _addChannelTrigger = true;
-                        await SendMessageAsync($"Напиши имя канала или ссылку на Twitch", replyMarkup: GetOnlyCancelKeyboard("Вставить ссылку на Twitch сюда"), cancellationToken: token);
+                        await SendMessageAsync($"Напиши имя канала или ссылку на Twitch", replyMarkup: Keyboards.GetOnlyCancelKeyboard("Вставить ссылку на Twitch сюда"), cancellationToken: token);
                         return;
                     }
                     if (message.Text == "🗑️ Удалить")
                     {
                         disableTriggers();
                         _deleteChannelTrigger = true;
-                        await SendMessageAsync($"Напиши имя канала который хочешь удалить", replyMarkup: GetDynamicKeyboard(Program.Settings.TrackedChannels, "Можешь выбрать на кнопках ниже"), cancellationToken: token);
+                        await SendMessageAsync($"Напиши имя канала который хочешь удалить", replyMarkup: Keyboards.GetDynamicKeyboard(Program.Settings.TrackedChannels, "Можешь выбрать на кнопках ниже"), cancellationToken: token);
                         return;
                     }
                     if (message.Text == "📺 Каналы")
                     {
                         var channels = "---- Отслеживаемые каналы на Twitch ----\n";
                         channels += "<b>" + string.Join("\n", Program.Settings.TrackedChannels.Select(ch => $"🎥 <a href=\"https://www.twitch.tv/{ch}\">{ch}</a>")) + "</b>";
-                        await SendMessageAsync(channels, replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                        await SendMessageAsync(channels, replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
                         disableTriggers();
                         return;
                     }
-                    if (message.Text == "🏠 Главная")
+                    if (message.Text == "🏠 Главная" || message.Text == "🏠 Вернуться на главную")
                     {
                         _startMessage();
                         return;
@@ -204,7 +222,7 @@ namespace TwitchDownloader2.CLI
                     if (message.Text == "🔁 Принудительно обновить")
                     {
                         Program.TwitchChecker.ForceCheck();
-                        await SendMessageAsync($"<b>Выполнено</b>", parseMode: ParseMode.Html, replyMarkup: GetMainKeyboard(), cancellationToken: token);
+                        await SendMessageAsync($"<b>Выполнено</b>", parseMode: ParseMode.Html, replyMarkup: Keyboards.GetMainKeyboard(), cancellationToken: token);
                         return;
                     }
                     if (message.Text == "📜 Статус")
@@ -226,26 +244,44 @@ namespace TwitchDownloader2.CLI
                             text += $"{status} {channel.Key}" + "\n";
                         }
 
-                        await SendMessageAsync(text, replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                        await SendMessageAsync(text, replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
                         return;
                     }
                     if (message.Text == "⬇️ Загрузить")
                     {
 
-                        await SendMessageAsync("Выберите опцию:", GetDownloadKeyboard(), token, parseMode: ParseMode.Html);
+                        await SendMessageAsync("Выберите опцию:", Keyboards.GetDownloadKeyboard(), token, parseMode: ParseMode.Html);
+                        return;
+                    }
+                    if (message.Text == "⚙ Настройки")
+                    {
+                        await SendMessageAsync("Чтобы продолжить нужно выбрать нужный раздел настроек на клавиатуре ниже", Keyboards.GetSettingsKeyboard(), token, parseMode: ParseMode.Html);
+                        return;
+                    }
+                    if (message.Text == "📂 Папка загрузки")
+                    {
+                        await SendMessageAsync($"...", Keyboards.GetPathEditKeyboard(), token, parseMode: ParseMode.Html);
+                        var path = Program.Settings.DownloadPath.Replace(@"\", @"\\");
+                        await SendMessageAsync($"**📂 Папка загрузки**\n\nСейчас загрузка происходит в папку по такому пути:\n```path\n{path}```", Keyboards.GetEditPathButton(), token, parseMode: ParseMode.MarkdownV2);
+                        return;
+                    }
+                    if (message.Text == "[placeholder]")
+                    {
+
+                        await SendMessageAsync("Действие еще не реализованно, можете проверить обновление на <b><a href=\"https://me.liis17.ru/app/twitchdownloader\">сайте</a></b>", Keyboards.GetMainKeyboard(), token, parseMode: ParseMode.Html);
                         return;
                     }
                     else
                     {
-                        await SendMessageAsync($"Нет такой команды: <b>{message.Text}</b>", replyMarkup: GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
+                        await SendMessageAsync($"Нет такой команды: <b>{message.Text}</b>", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
                     }
                 }
 
                 async void _startMessage()
                 {
                     disableTriggers();
-                    await SendMessageAsync($"Привет, {message.Chat.FirstName} {message.Chat.LastName}", replyMarkup: GetMainKeyboard(), cancellationToken: token);
-                    await SendMessageAsync(MainPageString(), replyMarkup: GetMainKeyboard(), cancellationToken: token);
+                    await SendMessageAsync($"Привет, {message.Chat.FirstName} {message.Chat.LastName}", replyMarkup: Keyboards.GetMainKeyboard(), cancellationToken: token);
+                    await SendMessageAsync(MainPageString(), replyMarkup: Keyboards.GetMainKeyboard(), cancellationToken: token);
                 }
             }
             else if (update.CallbackQuery is { } callback)
@@ -259,6 +295,10 @@ namespace TwitchDownloader2.CLI
                         break;
                     case "settings":
                         await SendMessageAsync("Здесь будут настройки ⚙", cancellationToken: token);
+                        break;
+                    case "editdownloadpath":
+                        await SendMessageAsync("Введи новый путь к папке для загрузки стримов", Keyboards.GetOnlyCancelKeyboard(), token, ParseMode.Html);
+                        _editDownloadPathTrigger = true;
                         break;
                 }
 
@@ -286,89 +326,7 @@ namespace TwitchDownloader2.CLI
         /// <summary>
         /// Пример клавиатуры под полем ввода текста.
         /// </summary>
-        private static ReplyKeyboardMarkup GetMainKeyboard(string placeholder = "Используй кнопки ниже")
-        {
-            return new ReplyKeyboardMarkup(new[]
-            {
-                new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
-                new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
-                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
-                new KeyboardButton[] { "🔁 Принудительно обновить" }
-            })
-            {
-                InputFieldPlaceholder = placeholder,
-                IsPersistent = true,
-                ResizeKeyboard = true,
-                OneTimeKeyboard = false
-            };
-        }
-        private static ReplyKeyboardMarkup GetDownloadKeyboard(string placeholder = "Используй кнопки ниже")
-        {
-            return new ReplyKeyboardMarkup(new[]
-            {
-                new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
-                new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
-                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
-                new KeyboardButton[] { "🔁 Принудительно обновить" }
-            })
-            {
-                InputFieldPlaceholder = placeholder,
-                IsPersistent = true,
-                ResizeKeyboard = true,
-                OneTimeKeyboard = false
-            };
-        }
-        private static ReplyKeyboardMarkup GetOnlyCancelKeyboard(string placeholder = "Введи это сюда")
-        {
-            return new ReplyKeyboardMarkup(new[]
-            {
-                new KeyboardButton[] { "❌ Отменить действие" }
-            })
-            {
-                InputFieldPlaceholder = placeholder,
-                IsPersistent = true,
-                ResizeKeyboard = true,
-                OneTimeKeyboard = false
-            };
-        }
-        private static ReplyKeyboardMarkup GetServiceKeyboard(string placeholder = "Введи это сюда")
-        {
-            return new ReplyKeyboardMarkup(new[]
-            {
-                new KeyboardButton[] { "❌ Отменить действие" },
-                new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
-                new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
-                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
-                new KeyboardButton[] { "🔁 Принудительно обновить" }
-            })
-            {
-                InputFieldPlaceholder = placeholder,
-                IsPersistent = true,
-                ResizeKeyboard = true,
-                OneTimeKeyboard = false
-            };
-        }
 
-        private static ReplyKeyboardMarkup GetDynamicKeyboard(IEnumerable<string> items, string placeholder = "Введи имя канала тут или выбери ниже")
-        {
-            const int maxButtonsPerRow = 4;
-
-            var rows = items
-            .Select((text, index) => new { text, index })
-            .GroupBy(x => x.index / maxButtonsPerRow)
-            .Select(g => g.Select(x => new KeyboardButton(x.text)).ToArray())
-            .ToList();
-
-            rows.Insert(0, new[] { new KeyboardButton("❌ Отменить действие") });
-
-            return new ReplyKeyboardMarkup(rows)
-            {
-                InputFieldPlaceholder = placeholder,
-                IsPersistent = true,
-                ResizeKeyboard = true,
-                OneTimeKeyboard = false
-            };
-        }
 
         private string MainPageString()
         {
