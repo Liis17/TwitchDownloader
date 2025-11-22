@@ -25,7 +25,7 @@ namespace TwitchDownloader2.CLI
             }
         }
 
-        public void StartDownload(string channelName)
+        public async Task StartDownload(string channelName)
         {
             if (string.IsNullOrWhiteSpace(channelName))
             {
@@ -43,7 +43,7 @@ namespace TwitchDownloader2.CLI
             $"⬇️  Скачивание запущено!\n" +
             $"\n" +
             $"🔔 По завершению стрима придет уведомление";
-            Program.TelegramServiceInstance.SendNotification(message);
+            await Program.TelegramServiceInstance.SendNotification(message);
             Thread.Sleep(1000);
             var path = Program.Settings.DownloadPath;
             var message2 = $"" +
@@ -51,11 +51,9 @@ namespace TwitchDownloader2.CLI
                 $"<pre>🎞️ {path}\\{channel}_video_1_{sessionCode}.ts\n" +
                 $"🎞️ {path}\\{channel}_video_2_{sessionCode}.ts\n" +
                 $"🎵 {path}\\{channel}_audio_1_{sessionCode}.aac\n" +
-                $"🎵 {path}\\{channel}_audio_2_{sessionCode}.aac</pre>\n\n" +
-                $"<b>После успешной загрузки будет перекодирован в:</b>\n" +
-                $"<pre>🎞️ {path}\\{channel}_video_2_{sessionCode}_final.mp4</pre>";
+                $"🎵 {path}\\{channel}_audio_2_{sessionCode}.aac</pre>";
 
-            Program.TelegramServiceInstance.SendNotification(message2);
+            await Program.TelegramServiceInstance.SendNotification(message2);
 
             var hlsUrl = ResolveHlsUrl(channel);
             if (string.IsNullOrWhiteSpace(hlsUrl))
@@ -97,71 +95,14 @@ namespace TwitchDownloader2.CLI
                 bool audioEqual = FilesEqualByHash(fileAudio1, fileAudio2);
                 bool videoEqual = FilesEqualByHash(fileVideo1, fileVideo2);
 
-                string outputFile;
-                if (audioEqual && videoEqual)
+                if (audioEqual)
                 {
-                    // Идентичные: удаляем аудио1/видео1 и собираем из пары #2; затем чистим всё
                     SafeDelete(fileAudio1);
-                    SafeDelete(fileVideo1);
-
-                    var outDir = Path.GetDirectoryName(fileVideo2) ?? _downloadRoot;
-                    var tempDir = Path.Combine(outDir, $"temp_{sessionCode}");
-                    Directory.CreateDirectory(tempDir);
-
-                    var tempAudioMp3 = Path.Combine(tempDir, "audio.mp3");
-                    RunFfmpegBlocking($"-i \"{fileAudio2}\" -q:a 0 -map a \"{tempAudioMp3}\"", "Конвертация аудио в mp3 завершена.");
-
-                    var tempVideoNoAudio = Path.Combine(tempDir, "video_no_audio.mp4");
-                    RunFfmpegBlocking($"-i \"{fileVideo2}\" -an -vcodec copy \"{tempVideoNoAudio}\"", "Видео без аудио подготовлено.");
-
-                    var baseName = Path.GetFileNameWithoutExtension(fileVideo2);
-                    outputFile = Path.Combine(outDir, $"{baseName}_final.mp4");
-                    RunFfmpegBlocking($"-i \"{tempVideoNoAudio}\" -i \"{tempAudioMp3}\" -c:v copy -c:a aac -strict experimental \"{outputFile}\"", "Финальный файл собран.");
-
-                    // Удаляем временную папку
-                    try { Directory.Delete(tempDir, true); } catch { }
-
-                    // Удаляем оставшиеся исходники (#2)
-                    SafeDelete(fileAudio2);
-                    SafeDelete(fileVideo2);
                 }
-                else
+                if (videoEqual)
                 {
-                    // Разные: берём самые большие файлы по размеру, собираем, не удаляем исходники, а после перенесём их в папку sessionCode
-                    string bestAudio = PickLargest(fileAudio1, fileAudio2);
-                    string bestVideo = PickLargest(fileVideo1, fileVideo2);
-
-                    var outDir = Path.GetDirectoryName(bestVideo) ?? _downloadRoot;
-                    var tempDir = Path.Combine(outDir, $"temp_{sessionCode}");
-                    Directory.CreateDirectory(tempDir);
-
-                    var tempAudioMp3 = Path.Combine(tempDir, "audio.mp3");
-                    RunFfmpegBlocking($"-i \"{bestAudio}\" -q:a 0 -map a \"{tempAudioMp3}\"", "Конвертация аудио в mp3 завершена.");
-
-                    var tempVideoNoAudio = Path.Combine(tempDir, "video_no_audio.mp4");
-                    RunFfmpegBlocking($"-i \"{bestVideo}\" -an -vcodec copy \"{tempVideoNoAudio}\"", "Видео без аудио подготовлено.");
-
-                    var baseName = Path.GetFileNameWithoutExtension(bestVideo);
-                    outputFile = Path.Combine(outDir, $"{baseName}_final.mp4");
-                    RunFfmpegBlocking($"-i \"{tempVideoNoAudio}\" -i \"{tempAudioMp3}\" -c:v copy -c:a aac -strict experimental \"{outputFile}\"", "Финальный файл собран.");
-
-                    // Удаляем временную папку
-                    try { Directory.Delete(tempDir, true); } catch { }
-
-                    // Переносим все исходники в папку sessionCode
-                    var sessionDir = Path.Combine(_downloadRoot, sessionCode);
-                    try { Directory.CreateDirectory(sessionDir); } catch { }
-                    MoveIfExists(fileAudio1, Path.Combine(sessionDir, Path.GetFileName(fileAudio1)));
-                    MoveIfExists(fileAudio2, Path.Combine(sessionDir, Path.GetFileName(fileAudio2)));
-                    MoveIfExists(fileVideo1, Path.Combine(sessionDir, Path.GetFileName(fileVideo1)));
-                    MoveIfExists(fileVideo2, Path.Combine(sessionDir, Path.GetFileName(fileVideo2)));
+                    SafeDelete(fileVideo1);
                 }
-
-                // Проверяем целостность выходного файла блоками по 4Кб
-                VerifyFileReadable(outputFile, 4096);
-
-                // Выброс исключения с путем к финальному файлу
-                throw new Exception(outputFile);
             }
             catch (Exception ex)
             {
@@ -170,30 +111,10 @@ namespace TwitchDownloader2.CLI
             finally
             {
                 try { Program.TwitchChecker?.MarkDownloadFinished(channel); } catch { }
+                ConsoleWriteLine($"Загрузка канала '{channel}' завершена (сессия {sessionCode})");
+                Program.TelegramServiceInstance.SendNotification($"Загрузка стрима {channel} Завершена");
                 foreach (var p in processes) { try { p?.Dispose(); } catch { } }
             }
-        }
-
-        private static string PickLargest(string path1, string path2)
-        {
-            long s1 = SafeLength(path1);
-            long s2 = SafeLength(path2);
-            return s2 > s1 ? path2 : path1;
-        }
-
-        private static long SafeLength(string path)
-        {
-            try { return new FileInfo(path).Length; } catch { return -1; }
-        }
-
-        private static void VerifyFileReadable(string path, int blockSize)
-        {
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            var buffer = new byte[blockSize];
-            int read;
-            long total = 0;
-            while ((read = fs.Read(buffer, 0, buffer.Length)) > 0) total += read;
-            if (total == 0) throw new IOException("Пустой файл результата");
         }
 
         private static bool FilesEqualByHash(string path1, string path2)
@@ -205,11 +126,6 @@ namespace TwitchDownloader2.CLI
             var h1 = sha.ComputeHash(f1);
             var h2 = sha.ComputeHash(f2);
             return h1.AsSpan().SequenceEqual(h2);
-        }
-
-        private static void MoveIfExists(string src, string dst)
-        {
-            try { if (File.Exists(src)) File.Move(src, dst, overwrite: true); } catch { }
         }
 
         private static void SafeDelete(string path)
@@ -254,36 +170,6 @@ namespace TwitchDownloader2.CLI
             {
                 ConsoleWriteLine($"Ошибка запуска yt-dlp: {ex.Message}", ConsoleColor.DarkRed);
                 return string.Empty;
-            }
-        }
-
-        private void RunFfmpegBlocking(string args, string successLog)
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "ffmpeg",
-                Arguments = args,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-
-            using var p = new Process { StartInfo = psi };
-            p.Start();
-            string stdout = p.StandardOutput.ReadToEnd();
-            string stderr = p.StandardError.ReadToEnd();
-            p.WaitForExit();
-
-            if (p.ExitCode != 0)
-            {
-                throw new Exception($"ffmpeg exit {p.ExitCode}: {stderr}");
-            }
-            else
-            {
-                ConsoleWriteLine(successLog);
             }
         }
 

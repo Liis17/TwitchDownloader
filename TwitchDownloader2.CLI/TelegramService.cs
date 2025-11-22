@@ -181,6 +181,7 @@ namespace TwitchDownloader2.CLI
                                 Program.Settings.DownloadPath = message.Text;
                                 await SendMessageAsync($"✨ Путь изменен", replyMarkup: Keyboards.GetPathEditKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
                                 var path = Program.Settings.DownloadPath.Replace(@"\", @"\\");
+                                Program.Settings.Save();
                                 await SendMessageAsync($"**📂 Папка загрузки**\n\nСейчас загрузка происходит в папку по такому пути:\n```path\n{path}```", Keyboards.GetEditPathButton(), token, parseMode: ParseMode.MarkdownV2);
                             }
                             disableTriggers();
@@ -263,6 +264,12 @@ namespace TwitchDownloader2.CLI
                         await SendMessageAsync($"...", Keyboards.GetPathEditKeyboard(), token, parseMode: ParseMode.Html);
                         var path = Program.Settings.DownloadPath.Replace(@"\", @"\\");
                         await SendMessageAsync($"**📂 Папка загрузки**\n\nСейчас загрузка происходит в папку по такому пути:\n```path\n{path}```", Keyboards.GetEditPathButton(), token, parseMode: ParseMode.MarkdownV2);
+                        return;
+                    }
+                    if (message.Text == "💾 Сохранить настройки")
+                    {
+                        await SendMessageAsync($"**💾 Настройки сохранены**", Keyboards.GetMainKeyboard(), token, parseMode: ParseMode.MarkdownV2);
+                        Program.Settings.Save();
                         return;
                     }
                     if (message.Text == "[placeholder]")
