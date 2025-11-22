@@ -275,7 +275,7 @@ namespace TwitchDownloader2.CLI
                     if (message.Text == "[placeholder]")
                     {
 
-                        await SendMessageAsync("Действие еще не реализованно, можете проверить обновление на <b><a href=\"https://me.liis17.ru/app/twitchdownloader\">сайте</a></b>", Keyboards.GetMainKeyboard(), token, parseMode: ParseMode.Html);
+                        await SendMessageAsync("Действие еще не реализованно, можете проверить обновление на <b><a href=\"https://я.проебал.домен/app/twitchdownloader\">сайте</a></b>", Keyboards.GetMainKeyboard(), token, parseMode: ParseMode.Html);
                         return;
                     }
                     else
