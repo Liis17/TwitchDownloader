@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -11,6 +12,17 @@ namespace TwitchDownloader2.CLI
 
         private readonly string _downloadRoot;
         private readonly Random _rng = new();
+        private readonly ConcurrentDictionary<string, DownloadSession> _activeSessions
+            = new(StringComparer.OrdinalIgnoreCase);
+
+        private sealed class DownloadSession
+        {
+            public string Channel = string.Empty;
+            public string SessionCode = string.Empty;
+            public readonly List<Process> Processes = new();
+            public readonly object ProcessesLock = new();
+            public volatile bool ForcedByUser;
+        }
 
         public TwitchDownloaderService(string downloadPath)
         {
@@ -68,7 +80,10 @@ namespace TwitchDownloader2.CLI
             string fileAudio1 = Path.Combine(_downloadRoot, $"{channel}_audio_1_{sessionCode}.aac");
             string fileAudio2 = Path.Combine(_downloadRoot, $"{channel}_audio_2_{sessionCode}.aac");
 
-            var worker = new Thread(() => RunDownloadSession(channel, sessionCode, hlsUrl, fileVideo1, fileVideo2, fileAudio1, fileAudio2))
+            var session = new DownloadSession { Channel = channel, SessionCode = sessionCode };
+            _activeSessions[channel] = session;
+
+            var worker = new Thread(() => RunDownloadSession(session, hlsUrl, fileVideo1, fileVideo2, fileAudio1, fileAudio2))
             {
                 IsBackground = true,
                 Name = $"DL-{channel}-{sessionCode}"
@@ -76,22 +91,106 @@ namespace TwitchDownloader2.CLI
             worker.Start();
         }
 
-        private void RunDownloadSession(string channel, string sessionCode, string hlsUrl, string fileVideo1, string fileVideo2, string fileAudio1, string fileAudio2)
+        /// <summary>
+        /// Возвращает имена каналов с активными в данный момент сессиями загрузки.
+        /// </summary>
+        public IReadOnlyList<string> GetActiveDownloads()
         {
-            var processes = new List<Process>();
+            return _activeSessions.Keys.ToList();
+        }
+
+        /// <summary>
+        /// Принудительно завершает все ffmpeg-процессы сессии указанного канала.
+        /// Возвращает false если активной сессии нет.
+        /// </summary>
+        public bool StopDownload(string channel)
+        {
+            if (string.IsNullOrWhiteSpace(channel)) return false;
+            if (!_activeSessions.TryGetValue(channel, out var session)) return false;
+
+            session.ForcedByUser = true;
+            List<Process> snapshot;
+            lock (session.ProcessesLock)
+            {
+                snapshot = session.Processes.ToList();
+            }
+            foreach (var p in snapshot)
+            {
+                try { if (p != null && !p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+            }
+            return true;
+        }
+
+        private void RunDownloadSession(DownloadSession session, string hlsUrl, string fileVideo1, string fileVideo2, string fileAudio1, string fileAudio2)
+        {
+            var channel = session.Channel;
+            var sessionCode = session.SessionCode;
+            bool abnormalTermination = false;
+
             try
             {
+                // Если пользователь успел нажать "Завершить загрузку" до старта потока — не запускаем ffmpeg
+                if (session.ForcedByUser)
+                {
+                    ConsoleWriteLine($"Сессия канала '{channel}' отменена пользователем до запуска ffmpeg");
+                    return;
+                }
+
                 string common = "-hide_banner -loglevel warning -y -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_delay_max 10";
 
-                processes.Add(StartFfmpegInNewWindow($"[TD2] {channel} video #1", $"{common} -i \"{hlsUrl}\" -c copy -f mpegts \"{fileVideo1}\""));
-                processes.Add(StartFfmpegInNewWindow($"[TD2] {channel} video #2", $"{common} -i \"{hlsUrl}\" -c copy -f mpegts \"{fileVideo2}\""));
-                processes.Add(StartFfmpegInNewWindow($"[TD2] {channel} audio #1", $"{common} -i \"{hlsUrl}\" -vn -c:a aac -b:a 160k -f adts \"{fileAudio1}\""));
-                processes.Add(StartFfmpegInNewWindow($"[TD2] {channel} audio #2", $"{common} -i \"{hlsUrl}\" -vn -c:a aac -b:a 160k -f adts \"{fileAudio2}\""));
+                var started = new List<Process>
+                {
+                    StartFfmpegInNewWindow($"[TD2] {channel} video #1", $"{common} -i \"{hlsUrl}\" -c copy -f mpegts \"{fileVideo1}\""),
+                    StartFfmpegInNewWindow($"[TD2] {channel} video #2", $"{common} -i \"{hlsUrl}\" -c copy -f mpegts \"{fileVideo2}\""),
+                    StartFfmpegInNewWindow($"[TD2] {channel} audio #1", $"{common} -i \"{hlsUrl}\" -vn -c:a aac -b:a 160k -f adts \"{fileAudio1}\""),
+                    StartFfmpegInNewWindow($"[TD2] {channel} audio #2", $"{common} -i \"{hlsUrl}\" -vn -c:a aac -b:a 160k -f adts \"{fileAudio2}\"")
+                };
 
-                var waits = processes.Where(p => p != null).Select(p => Task.Run(() => { try { p.WaitForExit(); } catch { } })).ToArray();
-                try { Task.WaitAll(waits); } catch { }
+                lock (session.ProcessesLock)
+                {
+                    session.Processes.AddRange(started);
+                }
 
-                // Проверка хешей аудио и видео
+                // Если пользователь нажал Stop пока стартовали — убить только что запущенные
+                if (session.ForcedByUser)
+                {
+                    foreach (var p in started)
+                    {
+                        try { if (p != null && !p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+                    }
+                }
+
+                var waits = started.Where(p => p != null)
+                    .Select(p => Task.Run(() => { try { p.WaitForExit(); } catch { } }))
+                    .ToArray();
+
+                if (waits.Length > 0)
+                {
+                    // 1. Ждём первого завершения
+                    try { Task.WaitAny(waits); } catch { }
+
+                    // 2. Даём остальным 10 секунд на самозакрытие
+                    bool allFinished;
+                    try { allFinished = Task.WaitAll(waits, TimeSpan.FromSeconds(10)); }
+                    catch { allFinished = false; }
+
+                    if (!allFinished)
+                    {
+                        // Если это пользовательский Stop — мы и так убили процессы, abnormal не выставляем
+                        if (!session.ForcedByUser)
+                        {
+                            abnormalTermination = true;
+                            ConsoleWriteLine($"Не все ffmpeg-процессы '{channel}' закрылись за 10с после первого. Принудительное завершение.", ConsoleColor.DarkYellow);
+                        }
+                        foreach (var p in started)
+                        {
+                            try { if (p != null && !p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+                        }
+                        try { Task.WaitAll(waits, TimeSpan.FromSeconds(5)); } catch { }
+                    }
+                }
+
+                // Проверка хешей аудио и видео (только если не был форсированный стоп — в его случае файлы наверняка обрезаны и дедуп бесполезен)
                 bool audioEqual = FilesEqualByHash(fileAudio1, fileAudio2);
                 bool videoEqual = FilesEqualByHash(fileVideo1, fileVideo2);
 
@@ -110,10 +209,32 @@ namespace TwitchDownloader2.CLI
             }
             finally
             {
+                _activeSessions.TryRemove(channel, out _);
                 try { Program.TwitchChecker?.MarkDownloadFinished(channel); } catch { }
                 ConsoleWriteLine($"Загрузка канала '{channel}' завершена (сессия {sessionCode})");
-                Program.TelegramServiceInstance.SendNotification($"Загрузка стрима {channel} Завершена");
-                foreach (var p in processes) { try { p?.Dispose(); } catch { } }
+
+                try
+                {
+                    if (session.ForcedByUser)
+                    {
+                        _ = Program.TelegramServiceInstance.SendNotification($"⛔ Загрузка стрима <b>{channel}</b> принудительно приостановлена");
+                    }
+                    else if (abnormalTermination)
+                    {
+                        _ = Program.TelegramServiceInstance.SendNotification($"⚠️ При завершении загрузки <b>{channel}</b> один из ffmpeg-процессов был принудительно закрыт. Канал будет проверен заново.");
+                        try { Program.TwitchChecker?.ForceCheck(); } catch { }
+                    }
+                    else
+                    {
+                        _ = Program.TelegramServiceInstance.SendNotification($"Загрузка стрима {channel} Завершена");
+                    }
+                }
+                catch { }
+
+                lock (session.ProcessesLock)
+                {
+                    foreach (var p in session.Processes) { try { p?.Dispose(); } catch { } }
+                }
             }
         }
 

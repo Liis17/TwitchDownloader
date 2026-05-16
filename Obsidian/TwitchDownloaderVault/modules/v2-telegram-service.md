@@ -17,6 +17,7 @@ Telegram-бот, который обрабатывает сообщения и c
 | `_addChannelTrigger` | `bool` | Ожидаем ли ввод имени для добавления |
 | `_deleteChannelTrigger` | `bool` | Ожидаем ли ввод имени для удаления |
 | `_editDownloadPathTrigger` | `bool` | Ожидаем ли ввод нового пути |
+| `_stopDownloadTrigger` | `bool` | Ожидаем ли выбор канала для принудительного завершения загрузки |
 
 Все триггеры сбрасываются методом `disableTriggers()`.
 

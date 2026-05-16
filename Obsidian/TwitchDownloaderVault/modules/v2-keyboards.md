@@ -17,7 +17,7 @@ Parent: [[index]]
 | `GetOnlyCancelKeyboard(placeholder)` | Reply | Одна кнопка "❌ Отменить действие" |
 | `GetServiceKeyboard(placeholder)` | Reply | Main + Cancel сверху (для служебных режимов) |
 | `GetDynamicKeyboard(items, placeholder)` | Reply | Динамика: 4 кнопки/ряд из `items` + Cancel сверху. Используется для выбора канала к удалению |
-| `GetSettingsKeyboard()` | Reply | Папка загрузки / Сохранить настройки + плейсхолдеры + Вернуться на главную |
+| `GetSettingsKeyboard()` | Reply | Папка загрузки / Сохранить настройки / ⛔ Завершить загрузку + плейсхолдеры + Вернуться на главную |
 | `GetPathEditKeyboard()` | Reply | Одна кнопка "🏠 Вернуться на главную" |
 
 ## Зависимости

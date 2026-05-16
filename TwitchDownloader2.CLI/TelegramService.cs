@@ -17,6 +17,7 @@ namespace TwitchDownloader2.CLI
         private bool _addChannelTrigger = false;
         private bool _deleteChannelTrigger = false;
         private bool _editDownloadPathTrigger = false;
+        private bool _stopDownloadTrigger = false;
 
         #region Служебные методы
         public TelegramService(string token, long ownerId)
@@ -111,6 +112,7 @@ namespace TwitchDownloader2.CLI
             _addChannelTrigger = false;
             _deleteChannelTrigger = false;
             _editDownloadPathTrigger = false;
+            _stopDownloadTrigger = false;
         }
         private async Task HandleUpdateAsync(ITelegramBotClient bot, Update update, CancellationToken token)
         {
@@ -185,6 +187,19 @@ namespace TwitchDownloader2.CLI
                                 await SendMessageAsync($"**📂 Папка загрузки**\n\nСейчас загрузка происходит в папку по такому пути:\n```path\n{path}```", Keyboards.GetEditPathButton(), token, parseMode: ParseMode.MarkdownV2);
                             }
                             disableTriggers();
+                            return;
+                        }
+                        if (_stopDownloadTrigger)
+                        {
+                            var name = ExtractChannelName(message.Text.Replace(" ", "").ToLower());
+                            bool ok = Program.TwitchDownloader != null && Program.TwitchDownloader.StopDownload(name);
+                            disableTriggers();
+                            await SendMessageAsync(
+                                ok ? $"⛔ Команда на завершение загрузки канала <b>{name}</b> отправлена"
+                                   : $"⚠️ Активной загрузки для канала <b>{name}</b> не найдено",
+                                replyMarkup: Keyboards.GetMainKeyboard(),
+                                parseMode: ParseMode.Html,
+                                cancellationToken: token);
                             return;
                         }
                     }
@@ -270,6 +285,25 @@ namespace TwitchDownloader2.CLI
                     {
                         await SendMessageAsync($"**💾 Настройки сохранены**", Keyboards.GetMainKeyboard(), token, parseMode: ParseMode.MarkdownV2);
                         Program.Settings.Save();
+                        return;
+                    }
+                    if (message.Text == "⛔ Завершить загрузку")
+                    {
+                        var active = Program.TwitchDownloader?.GetActiveDownloads() ?? new List<string>();
+                        if (active.Count == 0)
+                        {
+                            await SendMessageAsync("ℹ️ Сейчас активных загрузок нет",
+                                replyMarkup: Keyboards.GetSettingsKeyboard(),
+                                parseMode: ParseMode.Html,
+                                cancellationToken: token);
+                            return;
+                        }
+                        disableTriggers();
+                        _stopDownloadTrigger = true;
+                        await SendMessageAsync("Выбери канал, чью загрузку нужно завершить:",
+                            replyMarkup: Keyboards.GetDynamicKeyboard(active, "Выбери канал на кнопках ниже"),
+                            parseMode: ParseMode.Html,
+                            cancellationToken: token);
                         return;
                     }
                     if (message.Text == "[placeholder]")

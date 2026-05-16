@@ -99,7 +99,7 @@ namespace TwitchDownloader2.CLI
         {
             return new ReplyKeyboardMarkup(new[]
             {
-                new KeyboardButton[] { "📂 Папка загрузки", "💾 Сохранить настройки", "[placeholder]" },
+                new KeyboardButton[] { "📂 Папка загрузки", "💾 Сохранить настройки", "⛔ Завершить загрузку" },
                 new KeyboardButton[] { "[placeholder]", "[placeholder]", "[placeholder]" },
                 new KeyboardButton[] { "[placeholder]", "[placeholder]" },
                 new KeyboardButton[] { "🏠 Вернуться на главную" }

@@ -31,6 +31,7 @@ Parent: [[index]]
 |--------|---------|
 | `📂 Папка загрузки` | Показывает текущий путь в MarkdownV2 + inline-кнопка "Изменить" |
 | `💾 Сохранить настройки` | `Program.Settings.Save()` + сообщение об успехе |
+| `⛔ Завершить загрузку` | Если активных загрузок нет — «ℹ️ Сейчас активных загрузок нет». Иначе включает `_stopDownloadTrigger` и показывает динамическую клавиатуру с активными каналами. Выбранный канал — `Program.TwitchDownloader.StopDownload(name)` |
 | `[placeholder]` | Заглушка: "Действие еще не реализованно..." со ссылкой на (несуществующий) сайт |
 
 ## Inline callback (`CallbackQuery.Data`)
@@ -47,5 +48,6 @@ Parent: [[index]]
 - `_addChannelTrigger` — ожидаем имя/url канала к добавлению
 - `_deleteChannelTrigger` — ожидаем имя канала к удалению
 - `_editDownloadPathTrigger` — ожидаем путь к новой папке
+- `_stopDownloadTrigger` — ожидаем имя канала, чью активную загрузку нужно принудительно завершить
 
 См. также [[modules/v2-telegram-service]].
