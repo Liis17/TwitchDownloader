@@ -36,4 +36,5 @@ Parent: [[Index]]
 ## Зависимости
 
 - Использует: Twitch GraphQL, Twitch Usher/CDN, `HttpClient`.
-- Будет использоваться в: [[modules/v2-twitch-downloader]], [[modules/v2-twitch-checker]].
+- Используется в: [[modules/v2-twitch-downloader]]. Checker обращается только к
+  `ITwitchDownloaderService` и не зависит от Twitch HTTP-клиента напрямую.

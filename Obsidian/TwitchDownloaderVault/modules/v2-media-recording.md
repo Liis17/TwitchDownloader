@@ -19,10 +19,10 @@ Parent: [[Index]]
 
 | Метод | Описание |
 |-------|----------|
-| `RecordAsync(channel, initialPlaylistUri, rawPath, cancellationToken): Task<LiveRecordingResult>` | Дедуплицирует сегменты по media sequence, фиксирует дыры, безопасно пропускает только рекламу с `amazon`/`stitched` в `EXTINF` и пишет MPEG-TS либо fMP4. |
-| `FinalizeAsync(rawPath, expectedDurationSeconds, container, cancellationToken): Task<MediaFinalizeResult>` | Перекодирует аудио с async-resample, создаёт `.mp4.part`, проверяет длительность/A-V/DTS и атомарно публикует `.mp4`. |
-| `RecoverOrphansAsync(directory, cancellationToken): Task<IReadOnlyList<MediaFinalizeResult>>` | Находит только `*.recording`, определяет контейнер по сигнатуре, вычисляет длительность декодирующим проходом и запускает обычную финализацию. |
-| `RunAsync(executable, arguments, cancellationToken): Task<MediaToolResult>` | Запускает внешний media tool без shell и уничтожает дерево процесса при отмене. |
+| `RecordAsync(channel: string, initialPlaylistUri: Uri, rawPath: string, cancellationToken: CancellationToken): Task<LiveRecordingResult>` | Дедуплицирует sequence, считает дыры/рекламу и пишет MPEG-TS либо fMP4. |
+| `FinalizeAsync(rawPath: string, expectedDurationSeconds: double, container: RecordingContainer, cancellationToken: CancellationToken): Task<MediaFinalizeResult>` | Создаёт `.mp4.part`, синхронизирует аудио, проверяет и атомарно публикует `.mp4`. |
+| `RecoverOrphansAsync(directory: string, cancellationToken: CancellationToken): Task<IReadOnlyList<MediaFinalizeResult>>` | Определяет контейнер и duration каждого `*.recording`, затем финализирует. |
+| `RunAsync(executable: string, arguments: IReadOnlyList<string>, cancellationToken: CancellationToken): Task<MediaToolResult>` | Запускает media tool без shell и уничтожает дерево процесса при отмене. |
 
 ## Инварианты сохранности
 
@@ -31,8 +31,9 @@ Parent: [[Index]]
 - После четырёх неудачных попыток сегмент считается дырой; неизвестная рекламная разметка
   работает fail-open и контент сохраняется.
 - Валидный `.mp4.part` переименовывается в `.mp4` только после `ffprobe`.
-- При ошибке сырьё становится `.recording.failed`, а кандидат — `.mp4.failed`.
+- При ошибке сырьё становится `.recording.failed`, а кандидат — `.mp4.failed`; если media-кандидата нет, последний содержит диагностику.
 - Старые файлы `*_video_*.ts` и `*_audio_*.aac` восстановитель не перечисляет.
+- При process shutdown токены recorder/finalizer отменяются: `.recording` остаётся для следующего recovery, а незавершённый `.mp4.part` будет заменён новой попыткой.
 
 ## Зависимости
 

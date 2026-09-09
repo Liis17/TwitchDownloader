@@ -267,7 +267,23 @@ namespace TwitchDownloader2.CLI
         {
             if (Keyboards.TryParseStopDownloadCallback(callback.Data, out var sessionId))
             {
-                var result = await Program.TwitchDownloader.RequestStopAsync(sessionId, cancellationToken);
+                StopDownloadResult result;
+                try
+                {
+                    result = await Program.TwitchDownloader.RequestStopAsync(sessionId, cancellationToken);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    await bot.AnswerCallbackQuery(
+                        callback.Id,
+                        text: "Пауза не сохранена",
+                        cancellationToken: cancellationToken);
+                    await SendMessageAsync(
+                        $"❌ Запись продолжена: {Html(ex.Message)}",
+                        Keyboards.GetMainKeyboard(),
+                        cancellationToken);
+                    return;
+                }
                 var answer = result switch
                 {
                     StopDownloadResult.Accepted => "Остановка принята",
@@ -341,6 +357,10 @@ namespace TwitchDownloader2.CLI
             return SendMessageAsync(
                 $"⚠️ Не удалось собрать проверенный MP4 для <b>{Html(info.Channel)}</b>.\n" +
                 $"Сырьё сохранено: <code>{Html(info.RawPath)}</code>{candidate}\n" +
+                $"⏱ Длительность: <b>{FormatDuration(info.DurationSeconds)}</b>\n" +
+                $"💾 Размер failure-артефакта: <b>{FormatSize(info.SizeBytes)}</b>\n" +
+                $"📢 Пропущено рекламы: <b>{info.AdvertisementCount}</b> ({FormatDuration(info.AdvertisementDurationSeconds)})\n" +
+                $"🕳 Дыр в HLS: <b>{info.GapCount}</b>\n" +
                 $"Причина: {Html(info.ErrorMessage ?? "неизвестная ошибка")}",
                 cancellationToken: cancellationToken);
         }

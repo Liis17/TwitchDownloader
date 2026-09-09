@@ -30,6 +30,8 @@ namespace TwitchDownloader2.CLI
             var namesByGroup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var variants = new List<HlsVariant>();
             string pendingGroup = string.Empty;
+            string pendingName = string.Empty;
+            bool hasPendingVariant = false;
 
             foreach (var raw in SplitLines(text))
             {
@@ -50,17 +52,27 @@ namespace TwitchDownloader2.CLI
                     pendingGroup = attributes.TryGetValue("VIDEO", out var videoGroup)
                         ? videoGroup
                         : string.Empty;
+                    pendingName = attributes.TryGetValue("NAME", out var explicitName)
+                        ? explicitName
+                        : attributes.TryGetValue("RESOLUTION", out var resolution)
+                            ? resolution
+                            : attributes.TryGetValue("BANDWIDTH", out var bandwidth)
+                                ? $"bandwidth {bandwidth}"
+                                : "variant";
+                    hasPendingVariant = true;
                     continue;
                 }
 
-                if (pendingGroup.Length == 0 || line.Length == 0 || line[0] == '#')
+                if (!hasPendingVariant || line.Length == 0 || line[0] == '#')
                     continue;
 
                 var name = namesByGroup.TryGetValue(pendingGroup, out var mappedName)
                     ? mappedName
-                    : pendingGroup;
+                    : pendingGroup.Length > 0 ? pendingGroup : pendingName;
                 variants.Add(new HlsVariant(name, pendingGroup, ResolveUri(playlistUri, line)));
                 pendingGroup = string.Empty;
+                pendingName = string.Empty;
+                hasPendingVariant = false;
             }
 
             return new HlsMasterPlaylist(variants);

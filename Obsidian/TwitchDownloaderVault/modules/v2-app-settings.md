@@ -27,13 +27,15 @@ Parent: [[Index]]
 ## Ключевые методы
 | Метод | Описание |
 |-------|---------|
-| `Save()` | Создаёт копию настроек (с очищенными env-секретами), сериализует её → JSON → Base64 → пишет в `Data/settings.data`. Создаёт `Data/` если нет |
-| `static Load()` | Читает файл, декодирует Base64, десериализует JSON. При ошибке/отсутствии — возвращает `new AppSettings()` |
-| `GetTrackedChannelsSnapshot()` | Возвращает нормализованный case-insensitive снимок без дублей для checker/Telegram |
-| `AddTrackedChannel(channel)` / `RemoveTrackedChannel(channel)` | Потокобезопасно меняют tracked-список; удаление также удаляет pause |
-| `IsPausedUntilOffline(channel)` | Проверяет persisted-запрет повторного старта |
-| `AddPausedChannel(channel)` / `RemovePausedChannel(channel)` | Потокобезопасно управляют pause-until-offline |
-| `ConsoleWriteLine(...)` | Приватный логгер с префиксом `[AppSettings]` |
+| `AppSettings(writeSettingsFile: Action<string, string>): AppSettings` | Внутренний конструктор подменяет файловую запись в конкурентных тестах. |
+| `Save(): void` | Сохраняет настройки и логирует ошибку, не выбрасывая её обычным UI-вызовам. |
+| `SaveOrThrow(): void` | Под единым state-lock создаёт и записывает Base64 JSON, не позволяя устаревшему параллельному снимку затереть pause; ошибку передаёт downloader. |
+| `static Load(): AppSettings` | Читает и декодирует файл; при ошибке/отсутствии возвращает defaults. |
+| `GetTrackedChannelsSnapshot(): IReadOnlyList<string>` | Возвращает нормализованный case-insensitive снимок без дублей. |
+| `AddTrackedChannel(channel: string): bool` / `RemoveTrackedChannel(channel: string): bool` | Потокобезопасно меняют tracked-список; удаление также удаляет pause. |
+| `IsPausedUntilOffline(channel: string): bool` | Проверяет persisted-запрет повторного старта. |
+| `AddPausedChannel(channel: string): bool` / `RemovePausedChannel(channel: string): bool` | Потокобезопасно управляют pause-until-offline. |
+| `ConsoleWriteLine(message: string, color: ConsoleColor): void` | Приватный логгер с префиксом `[AppSettings]`. |
 
 ## Пути (приватные статические)
 - `DataDir = {BaseDirectory}/Data`
@@ -46,10 +48,13 @@ Parent: [[Index]]
 - **Base64 поверх JSON** — не шифрование, лишь обфускация. Если токен и ID переданы через env, они не сохраняются в `settings.data`.
 - Env имеет приоритет над одноимёнными полями из файла. Это позволяет передавать секреты в Docker через `.env`/secret-хранилище.
 - При отсутствии обязательных значений интерактивный локальный запуск запрашивает их в консоли; headless-запуск завершается с ошибкой и просит задать env.
-- Поля с `[JsonIgnore]` (`_serviceName`, `_consoleColor`, `DataDir`, `FilePath`) не попадают в сериализацию.
+- Поля с `[JsonIgnore]` (`_serviceName`, `_consoleColor`, `_stateLock`, `_writeSettingsFile`, `DataDir`, `FilePath`) не попадают в сериализацию.
 - `Save()` вызывается:
-  - В `Program.Exit()` при завершении.
+  - В `Program.ExitAsync()` при завершении.
   - В `Program.SettingsChecker()` после интерактивного ввода.
   - В `TelegramService` после изменений через бота (добавление/удаление канала, смена пути).
 - Канал в `TrackedChannels` нормализуется при добавлении: `lowercase` + `ExtractChannelName()` (см. [[modules/v2-telegram-service]]).
 - Обе коллекции нормализуются после загрузки; pause сохраняется в том же Base64 JSON и переживает рестарт.
+- Мутации коллекций и весь `SaveOrThrow()` сериализованы одним lock: параллельные stop/offline
+  не могут одновременно писать `settings.data` или опубликовать более старый снимок после нового.
+- Если `SaveOrThrow()` не может записать pause, downloader откатывает изменение и продолжает запись вместо ложного `Accepted`.

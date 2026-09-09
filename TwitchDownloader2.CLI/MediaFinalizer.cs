@@ -282,6 +282,7 @@ namespace TwitchDownloader2.CLI
             var failedOutputPath = outputPath + ".failed";
             TryMove(rawPath, failedRawPath);
             TryMove(partPath, failedOutputPath);
+            EnsureFailedOutputExists(failedOutputPath, message);
             _log?.Invoke(message);
             return new MediaFinalizeResult(
                 MediaFinalizeStatus.Failed,
@@ -354,6 +355,19 @@ namespace TwitchDownloader2.CLI
             catch
             {
                 // Preserve the original file when it cannot be parked.
+            }
+        }
+
+        private static void EnsureFailedOutputExists(string path, string message)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    File.WriteAllText(path, message, Encoding.UTF8);
+            }
+            catch
+            {
+                // If the filesystem itself is unavailable, the original raw file remains the recovery source.
             }
         }
 

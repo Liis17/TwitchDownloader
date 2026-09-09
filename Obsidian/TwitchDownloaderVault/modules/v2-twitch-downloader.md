@@ -16,11 +16,11 @@ Parent: [[Index]]
 
 | Метод | Описание |
 |-------|----------|
-| `TryStartDownloadAsync(channel, cancellationToken): Task<StartDownloadResult>` | Проверяет active/pause/live, резервирует канал и возвращает `Started`, `AlreadyActive`, `Offline`, `Suppressed` либо `Failed`. |
-| `RequestStopAsync(sessionId, cancellationToken): Task<StopDownloadResult>` | Сохраняет pause-until-offline, отменяет только указанную запись и сразу возвращает `Accepted`, `AlreadyStopping` либо `NotFound`. |
+| `TryStartDownloadAsync(channel: string, cancellationToken: CancellationToken): Task<StartDownloadResult>` | Проверяет active/pause/live, резервирует канал и возвращает `Started`, `AlreadyActive`, `Offline`, `Suppressed` либо `Failed`. |
+| `RequestStopAsync(sessionId: string, cancellationToken: CancellationToken): Task<StopDownloadResult>` | Сохраняет pause-until-offline, отменяет только указанную запись и сразу возвращает `Accepted`, `AlreadyStopping` либо `NotFound`. Ошибка persistence отклоняет stop исключением. |
 | `GetActiveDownloads(): IReadOnlyList<ActiveDownloadInfo>` | Возвращает session ID, канал, UTC-время старта, путь сырья и состояние `Recording`/`Finalizing`. |
-| `StopForShutdownAsync(cancellationToken): Task` | Отменяет HTTP и media tools, закрывает сырьё и намеренно не запускает/не продолжает финализацию. |
-| `RecoverInterruptedDownloadsAsync(cancellationToken)` | Перед стартом checker передаёт orphan `.recording` в [[modules/v2-media-recording]]. |
+| `StopForShutdownAsync(cancellationToken: CancellationToken): Task` | Отменяет HTTP и media tools, закрывает сырьё и намеренно не запускает/не продолжает финализацию. |
+| `RecoverInterruptedDownloadsAsync(cancellationToken: CancellationToken): Task<IReadOnlyList<MediaFinalizeResult>>` | Перед стартом checker передаёт orphan `.recording` в [[modules/v2-media-recording]]. |
 
 ## Жизненный цикл
 
@@ -46,3 +46,10 @@ Parent: [[Index]]
   [[modules/v2-media-recording]], `IRecordingNotificationSink`.
 - Используется в: [[modules/v2-program]], [[modules/v2-twitch-checker]],
   [[modules/v2-telegram-service]].
+
+## Удалённый API старой схемы
+
+- ~~`StartDownload(channelName: string): Task`~~ (удалён: 2026-09-10) — заменён на ожидаемый `TryStartDownloadAsync`.
+- ~~`StopDownload(channel: string): bool`~~ (удалён: 2026-09-10) — заменён на адресный `RequestStopAsync(sessionId)`.
+- ~~`ResolveHlsUrl(channel: string): string`~~ (удалён: 2026-09-10) — вместо `yt-dlp` используется playback client.
+- ~~`StartFfmpegProcess(...)` / `FilesEqualByHash(...)`~~ (удалены: 2026-09-10) — четыре потока и SHA256-дедупликация больше не нужны.

@@ -61,6 +61,26 @@ public sealed class TwitchPlaybackClientTests
     }
 
     [Fact]
+    public async Task ResolveLiveAsync_FallsBackWhenStreamInfHasNoVideoGroup()
+    {
+        var handler = new QueuedHttpMessageHandler(
+            JsonResponse("""{"data":{"streamPlaybackAccessToken":{"value":"token","signature":"sig"}}}"""),
+            TextResponse("""
+                #EXTM3U
+                #EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720
+                https://video.example/720p/index-dvr.m3u8
+                """));
+        using var httpClient = new HttpClient(handler);
+        var client = new TwitchPlaybackClient(httpClient);
+
+        var result = await client.ResolveLiveAsync("some_channel", CancellationToken.None);
+
+        Assert.Equal(TwitchPlaybackStatus.Live, result.Status);
+        Assert.Equal("https://video.example/720p/index-dvr.m3u8", result.MediaPlaylistUrl?.AbsoluteUri);
+        Assert.False(result.IsSource);
+    }
+
+    [Fact]
     public async Task ResolveLiveAsync_ReturnsOfflineWhenUsherReturnsNotFound()
     {
         var handler = new QueuedHttpMessageHandler(

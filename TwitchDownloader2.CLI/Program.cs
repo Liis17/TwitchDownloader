@@ -7,11 +7,13 @@
         private static ConsoleColor _consoleColor = ConsoleColor.DarkGreen;
         private static readonly ManualResetEventSlim ShutdownEvent = new(false);
         private static readonly HttpClient PlaybackHttpClient = new();
+        private static readonly CancellationTokenSource RecoveryCancellation = new();
+        private static Task RecoveryTask = Task.CompletedTask;
         public static TelegramService TelegramServiceInstance { get; private set; } = null!;
         public static AppSettings Settings { get; private set; } = AppSettings.Load();
         public static TwitchCheckerService TwitchChecker { get; private set; } = null!;
         public static TwitchDownloaderService TwitchDownloader { get; private set; } = null!;
-        public static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
             // Ensure UTF-8 encoding so emojis render correctly in Windows Terminal
             System.Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -32,15 +34,18 @@
                 new TwitchPlaybackClient(PlaybackHttpClient),
                 TelegramServiceInstance);
 
+            RecoveryTask = RecoverInterruptedDownloadsAsync(RecoveryCancellation.Token);
+
             ConsoleWriteLine("Запуск TwitchChecker-сервиса...");
             TwitchChecker = new TwitchCheckerService(Settings, TwitchDownloader);
-            TwitchChecker.Start();
 
             TelegramServiceInstance.Start();
+            TwitchChecker.Start();
 
-            Exit();
+            await ExitAsync();
         }
-        private static void Exit()
+
+        private static async Task ExitAsync()
         {
             Console.CancelKeyPress += HandleCancelKeyPress;
             AppDomain.CurrentDomain.ProcessExit += HandleProcessExit;
@@ -71,12 +76,71 @@
             }
             finally
             {
-                Settings.Save();
+                RecoveryCancellation.Cancel();
                 TelegramServiceInstance.Stop();
+
+                using var shutdownTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                try
+                {
+                    await TwitchChecker.StopAsync(shutdownTimeout.Token);
+                }
+                catch (Exception ex)
+                {
+                    ConsoleWriteLine($"Не удалось дождаться checker при завершении: {ex.Message}", ConsoleColor.DarkYellow);
+                }
+
+                try
+                {
+                    await TwitchDownloader.StopForShutdownAsync(shutdownTimeout.Token);
+                }
+                catch (Exception ex)
+                {
+                    ConsoleWriteLine($"Не удалось дождаться закрытия записей: {ex.Message}", ConsoleColor.DarkYellow);
+                }
+
+                try
+                {
+                    await RecoveryTask.WaitAsync(shutdownTimeout.Token);
+                }
+                catch (Exception ex)
+                {
+                    ConsoleWriteLine($"Не удалось дождаться recovery: {ex.Message}", ConsoleColor.DarkYellow);
+                }
+
+                Settings.Save();
                 TwitchChecker.Dispose();
+                PlaybackHttpClient.Dispose();
+                RecoveryCancellation.Dispose();
 
                 Console.CancelKeyPress -= HandleCancelKeyPress;
                 AppDomain.CurrentDomain.ProcessExit -= HandleProcessExit;
+            }
+        }
+
+        private static async Task RecoverInterruptedDownloadsAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                var results = await TwitchDownloader.RecoverInterruptedDownloadsAsync(cancellationToken);
+                foreach (var result in results)
+                {
+                    var color = result.Status == MediaFinalizeStatus.Succeeded
+                        ? ConsoleColor.Gray
+                        : ConsoleColor.DarkYellow;
+                    ConsoleWriteLine(
+                        result.Status == MediaFinalizeStatus.Succeeded
+                            ? $"Восстановлена запись: {result.OutputPath}"
+                            : $"Не удалось восстановить {result.RawPath}: {result.ErrorMessage}",
+                        color);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                ConsoleWriteLine("Восстановление записей отменено при завершении приложения.");
+            }
+            catch (Exception ex)
+            {
+                ConsoleWriteLine($"Ошибка фонового восстановления записей: {ex.Message}", ConsoleColor.DarkYellow);
             }
         }
 

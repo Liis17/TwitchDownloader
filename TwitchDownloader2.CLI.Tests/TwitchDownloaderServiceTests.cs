@@ -123,6 +123,31 @@ public sealed class TwitchDownloaderServiceTests
     }
 
     [Fact]
+    public async Task RequestStopAsync_DoesNotCancelWhenPauseCannotBePersisted()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var settings = CreateSettings(temporaryDirectory.Path);
+        var playback = new ControlledPlaybackClient();
+        playback.EnqueueLive("alpha");
+        var service = CreateService(
+            settings,
+            playback,
+            saveSettings: () => throw new IOException("disk is read-only"));
+
+        Assert.Equal(StartDownloadResult.Started, await service.TryStartDownloadAsync("alpha", CancellationToken.None));
+        var session = Assert.Single(service.GetActiveDownloads());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.RequestStopAsync(session.SessionId, CancellationToken.None));
+
+        Assert.DoesNotContain(settings.PausedUntilOfflineChannels, channel => channel == "alpha");
+        Assert.Equal(ActiveDownloadState.Recording, Assert.Single(service.GetActiveDownloads()).State);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await service.StopForShutdownAsync(timeout.Token);
+    }
+
+    [Fact]
     public async Task StaleTelegramCallbackCannotStopReplacementSession()
     {
         using var temporaryDirectory = new TemporaryDirectory();
@@ -167,6 +192,45 @@ public sealed class TwitchDownloaderServiceTests
         Assert.True(removed);
         Assert.Empty(settings.TrackedChannels);
         Assert.Empty(settings.PausedUntilOfflineChannels);
+    }
+
+    [Fact]
+    public async Task ShutdownLeavesRecordingAndNextInstanceRecoversIt()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var settings = CreateSettings(temporaryDirectory.Path);
+        var playback = new ControlledPlaybackClient();
+        playback.EnqueueLive("alpha");
+        playback.EnqueuePlaylist("alpha", """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:2
+            #EXT-X-MEDIA-SEQUENCE:1
+            #EXTINF:2,live
+            content.ts
+            """);
+        playback.Segments[new Uri("https://video.example/alpha/content.ts")] = Encoding.UTF8.GetBytes("media");
+        var firstMediaTools = new ControlledMediaToolRunner { DurationSeconds = 2 };
+        var firstInstance = CreateService(settings, playback, firstMediaTools);
+
+        Assert.Equal(StartDownloadResult.Started, await firstInstance.TryStartDownloadAsync("alpha", CancellationToken.None));
+        var rawPath = Assert.Single(firstInstance.GetActiveDownloads()).Path;
+        await playback.SegmentFetched.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(20);
+
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+            await firstInstance.StopForShutdownAsync(timeout.Token);
+
+        Assert.True(File.Exists(rawPath));
+        Assert.False(firstMediaTools.FinalizationStarted.Task.IsCompleted);
+        Assert.Empty(firstInstance.GetActiveDownloads());
+
+        var recoveryMediaTools = new ControlledMediaToolRunner { DurationSeconds = 2 };
+        var nextInstance = CreateService(settings, new ControlledPlaybackClient(), recoveryMediaTools);
+        var recovered = await nextInstance.RecoverInterruptedDownloadsAsync(CancellationToken.None);
+
+        Assert.Equal(MediaFinalizeStatus.Succeeded, Assert.Single(recovered).Status);
+        Assert.False(File.Exists(rawPath));
+        Assert.True(File.Exists(Path.ChangeExtension(rawPath, ".mp4")));
     }
 
     private static TwitchDownloaderService CreateService(
@@ -296,7 +360,10 @@ public sealed class TwitchDownloaderServiceTests
             }
 
             if (arguments[^1] == "-")
-                return new MediaToolResult(0, string.Empty, $"time=00:00:{DurationSeconds:00.00}");
+            {
+                var duration = DurationSeconds.ToString("00.00", CultureInfo.InvariantCulture);
+                return new MediaToolResult(0, string.Empty, $"time=00:00:{duration}");
+            }
 
             FinalizationStarted.TrySetResult();
             if (BlockFinalization)

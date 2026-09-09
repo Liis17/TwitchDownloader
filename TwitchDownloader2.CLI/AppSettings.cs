@@ -23,6 +23,18 @@ namespace TwitchDownloader2.CLI
         public string DownloadPath { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads");
 
         [JsonIgnore] private readonly object _stateLock = new();
+        [JsonIgnore] private readonly Action<string, string> _writeSettingsFile;
+
+        public AppSettings()
+            : this((path, contents) =>
+                File.WriteAllText(path, contents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+        {
+        }
+
+        internal AppSettings(Action<string, string> writeSettingsFile)
+        {
+            _writeSettingsFile = writeSettingsFile ?? throw new ArgumentNullException(nameof(writeSettingsFile));
+        }
 
 
         // ==== Пути ====
@@ -34,36 +46,39 @@ namespace TwitchDownloader2.CLI
         {
             try
             {
-                if (!Directory.Exists(DataDir))
-                    Directory.CreateDirectory(DataDir);
-
-                // Секреты, переданные через env, не дублируем в settings.data.
-                // Остальные настройки (каналы и путь) продолжают сохраняться локально.
-                AppSettings settingsToSave;
-                lock (_stateLock)
-                {
-                    settingsToSave = new AppSettings
-                    {
-                        TelegramToken = IsEnvironmentVariableDefined(TelegramTokenEnvironmentVariable)
-                            ? string.Empty
-                            : TelegramToken,
-                        TelegramIdOwner = IsEnvironmentVariableDefined(TelegramOwnerIdEnvironmentVariable)
-                            ? 0
-                            : TelegramIdOwner,
-                        TrackedChannels = new List<string>(TrackedChannels ?? new List<string>()),
-                        PausedUntilOfflineChannels = new List<string>(PausedUntilOfflineChannels ?? new List<string>()),
-                        DownloadPath = DownloadPath
-                    };
-                }
-
-                string json = JsonSerializer.Serialize(settingsToSave, new JsonSerializerOptions { WriteIndented = true });
-                string base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
-
-                File.WriteAllText(FilePath, base64, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                SaveOrThrow();
             }
             catch (Exception ex)
             {
                 ConsoleWriteLine($"Ошибка при сохранении настроек: {ex.Message}", ConsoleColor.DarkRed);
+            }
+        }
+
+        internal void SaveOrThrow()
+        {
+            lock (_stateLock)
+            {
+                if (!Directory.Exists(DataDir))
+                    Directory.CreateDirectory(DataDir);
+
+                // Держим тот же lock до завершения записи: более старый снимок не должен
+                // перезаписать изменения параллельной stop/offline операции.
+                var settingsToSave = new AppSettings
+                {
+                    TelegramToken = IsEnvironmentVariableDefined(TelegramTokenEnvironmentVariable)
+                        ? string.Empty
+                        : TelegramToken,
+                    TelegramIdOwner = IsEnvironmentVariableDefined(TelegramOwnerIdEnvironmentVariable)
+                        ? 0
+                        : TelegramIdOwner,
+                    TrackedChannels = new List<string>(TrackedChannels ?? new List<string>()),
+                    PausedUntilOfflineChannels = new List<string>(PausedUntilOfflineChannels ?? new List<string>()),
+                    DownloadPath = DownloadPath
+                };
+
+                string json = JsonSerializer.Serialize(settingsToSave, new JsonSerializerOptions { WriteIndented = true });
+                string base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+                _writeSettingsFile(FilePath, base64);
             }
         }
 

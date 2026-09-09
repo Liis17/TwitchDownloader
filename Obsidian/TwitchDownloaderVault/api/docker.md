@@ -3,7 +3,7 @@
 Parent: [[Index]]
 
 ## Файлы
-- `docker/Dockerfile` — multi-stage образ на базе .NET 10; устанавливает `ffmpeg` и `yt-dlp`.
+- `docker/Dockerfile` — multi-stage образ на базе .NET 10; устанавливает пакет `ffmpeg` (`ffmpeg` + `ffprobe`), без `yt-dlp`.
 - `docker/docker-compose.yml` — сервис с env-файлом, volume для настроек и volume для загрузок.
 - `docker/.env.example` — шаблон переменных окружения.
 - `docker/README.md` — команды подготовки, запуска, просмотра логов и остановки.
@@ -25,7 +25,7 @@ Parent: [[Index]]
 - `docker/data/` → `/app/Data` — отслеживаемые каналы и прочие сохраняемые настройки.
 - `docker/downloads/` → `/app/Downloads` — скачанные файлы.
 
-Контейнер запускается без TTY и завершает приложение по `SIGINT`; v2 ожидает сигнал завершения вместо чтения из stdin.
+Контейнер запускается без TTY и завершает приложение по `SIGINT`; v2 ожидает сигнал завершения вместо чтения из stdin. `stop_grace_period: 30s` сохраняется: приложение использует внутренний budget 10 секунд, закрывает active `.recording` без финализации и восстанавливает их при следующем старте.
 
 ## Автообновление
 

@@ -19,11 +19,12 @@ Parent: [[Index]]
 ## Ключевые методы
 | Метод | Описание |
 |-------|---------|
-| `Main(string[] args)` | UTF-8 → SettingsChecker → создание Telegram/shared HTTP/downloader/checker → запуск worker и Telegram → Exit |
-| `Exit()` | В интерактивном режиме ждёт `STOP`/`Ctrl+C`, а при redirected stdin ждёт сигнал завершения; сохраняет настройки и останавливает сервисы |
-| `SettingsChecker()` | Использует env/file-настройки; интерактивно запрашивает токен бота и ID администратора только если они отсутствуют |
-| `ConsoleWriteLine(message, color)` | Приватный логгер с префиксом `[CLI]` зелёного цвета |
-| `Uptime` (getter) | Возвращает время работы в формате `HH:MM` |
+| `Main(args: string[]): Task` | UTF-8 → settings → создание зависимостей → recovery → Telegram/checker → `ExitAsync`. |
+| `ExitAsync(): Task` | Ждёт `STOP`/сигнал, затем за 10-секундный budget отменяет recovery/checker/downloader и сохраняет настройки. |
+| `RecoverInterruptedDownloadsAsync(cancellationToken: CancellationToken): Task` | В фоне завершает orphan `.recording` и логирует результат каждого файла. |
+| `SettingsChecker(): void` | Проверяет env/file-настройки и интерактивно запрашивает недостающие Telegram-поля. |
+| `ConsoleWriteLine(message: string, color: ConsoleColor): void` | Приватный логгер с префиксом `[CLI]`. |
+| `Uptime: string` | Возвращает время работы в формате `HH:MM`. |
 
 ## Зависимости
 - Использует: [[modules/v2-app-settings]], [[modules/v2-telegram-service]], [[modules/v2-twitch-checker]], [[modules/v2-twitch-downloader]]
@@ -32,8 +33,10 @@ Parent: [[Index]]
 ## Важные детали
 - `Settings` инициализируется при объявлении поля — то есть до начала `Main`. Если файл повреждён, `Load()` пишет ошибку и возвращает дефолт.
 - Headless-запуск без обязательных Telegram-настроек завершается с понятной ошибкой вместо ожидания stdin.
-- `Exit()` подписан на `Console.CancelKeyPress` и `ProcessExit`; это позволяет Docker-контейнеру завершаться через сигнал.
+- `ExitAsync()` подписан на `Console.CancelKeyPress` и `ProcessExit`; это позволяет Docker-контейнеру завершаться через сигнал.
 - `Uptime` считается от `_startTime = DateTime.Now` (момент загрузки класса).
 - Версия в выводе: `Версия 2.0.0`.
 - Зависимости между сервисами реализованы через **глобальное статическое состояние** (`Program.X`), не через DI.
 - Twitch playback использует один shared `HttpClient`; downloader получает Telegram как `IRecordingNotificationSink`, а checker — интерфейс downloader.
+- Recovery запускается до checker, а перечисление orphan-файлов выполняется до появления новых active-сессий.
+- ~~`Exit()`~~ (удалён: 2026-09-10) — заменён на ожидаемый `ExitAsync()`.

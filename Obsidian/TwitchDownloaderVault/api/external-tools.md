@@ -2,61 +2,51 @@
 
 Parent: [[Index]]
 
-Приложение запускает два внешних CLI-инструмента через `System.Diagnostics.Process`. Оба обязаны быть в `PATH`.
+## V2: ffmpeg и ffprobe
 
-## yt-dlp
+`TwitchDownloader2.CLI` получает HLS через HTTP и требует два бинарника из пакета ffmpeg
+в `PATH`. Процессы запускает [[modules/v2-media-recording]] через `ProcessStartInfo.ArgumentList`
+без shell и с `-nostdin`; отмена уничтожает всё дерево процесса.
 
-Используется для:
-- **Проверки live-статуса** канала (v2): [[modules/v2-twitch-checker]]
-  ```
-  yt-dlp --quiet --no-warnings --print title "https://www.twitch.tv/{channel}"
-  ```
-  `ExitCode == 0` ⇒ канал live. Таймаут — 30 сек.
+### Финализация
 
-- **Получения HLS m3u8 URL** (v2): [[modules/v2-twitch-downloader]]
-  ```
-  yt-dlp --no-warnings --get-url https://www.twitch.tv/{channel}
-  ```
-  Первая строка stdout — m3u8 URL.
-
-- **То же в v1**: [[modules/v1-overview]]
-  ```
-  yt-dlp -g "{videoUrl}"
-  ```
-  Таймаут — 15 сек.
-
-## ffmpeg
-
-Используется для скачивания HLS потоков и (только v1) конвертации.
-
-### v2 — параллельные потоки
-`ffmpeg` запускается напрямую через `ProcessStartInfo` с `ArgumentList`; Windows `cmd.exe` не требуется. Процессы работают без отдельных окон, поэтому этот вариант совместим с macOS, Linux и Docker.
-
-Общие флаги (для реконнектов на нестабильной сети):
-```
--hide_banner -loglevel warning -y
--reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_on_network_error 1
--reconnect_delay_max 10
+```text
+ffmpeg -hide_banner -loglevel warning -nostdin -y
+  -f <mpegts|mp4> -i <source.recording>
+  -c:v copy -c:a aac -b:a 160k -ar 48000 -ac 2
+  -af aresample=async=1:first_pts=0
+  -f mp4 <output.mp4.part>
 ```
 
-Видео: `-c copy -f mpegts` в `.ts`
-Аудио: `-vn -c:a aac -b:a 160k -f adts` в `.aac`
+Входной demuxer выбирается явно: `mpegts` для TS и `mp4` для fMP4/CMAF.
 
-### v1 — `DownloadService.StartFfmpegProcess`
-Video: `-i {url} -c copy {file}.ts`
-Audio: `-i {url} -vn -acodec copy {file}.aac` (без перекодирования)
-Audio2: то же, с задержкой `Task.Delay(1000)` перед стартом.
+### Проверка
 
-### v1 — `ConverterService.ConvertAndMergeAsync`
-Цепочка из трёх вызовов ffmpeg:
-1. `-i audio.aac -codec:a libmp3lame -qscale:a 2 audio.mp3`
-2. `-i video.ts -c:v copy -an silent_video.mp4`
-3. `-i silent.mp4 -i audio.mp3 -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 output_final.mp4`
+`ffprobe` возвращает длительность video/audio stream. Финализатор сравнивает video с
+суммой записанных `EXTINF` (±2 с), audio с video (±2 с) и stderr ffmpeg на
+`Non-monotonous DTS`.
 
-## Требования к среде (из README)
-- Windows 10/11 x64
-- .NET 8 Runtime (v1) / .NET 10 Runtime (v2)
-- Права администратора для v1
-- `ffmpeg`, `yt-dlp` в PATH
+### Recovery duration
 
-Для Docker-образа v2 `ffmpeg` и `yt-dlp` устанавливаются в `docker/Dockerfile`.
+```text
+ffmpeg -v error -stats -nostdin -f <mpegts|mp4> -i <source.recording> -f null -
+```
+
+Последний `time=...` используется как фактическая длительность orphan-записи.
+
+## V2: удалённая зависимость yt-dlp
+
+V2 больше не вызывает и не устанавливает `yt-dlp`: live/offline, playback token и HLS URL
+получает [[modules/v2-twitch-playback]]. В Docker runtime установлен только пакет `ffmpeg`
+(он включает `ffprobe`) и CA certificates.
+
+## Legacy v1
+
+V1 остаётся без изменений и требует `yt-dlp`/`ffmpeg`:
+
+```text
+yt-dlp -g <twitch-url>
+ffmpeg -i <url> ...
+```
+
+Его `ConverterService` отдельно перекодирует аудио, создаёт silent video и объединяет их.

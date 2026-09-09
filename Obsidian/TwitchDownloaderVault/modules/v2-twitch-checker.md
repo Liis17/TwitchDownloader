@@ -18,9 +18,9 @@ Parent: [[Index]]
 |-------|----------|
 | `Start(): void` | Один раз запускает async worker после сборки всех зависимостей. |
 | `ForceCheck(): void` | Кладёт единичный сигнал в `SemaphoreSlim`; серия кликов схлопывается. |
-| `CheckNowAsync(cancellationToken): Task` | Параллельно вызывает downloader для уникальных tracked-каналов. |
+| `CheckNowAsync(cancellationToken: CancellationToken): Task` | Параллельно вызывает downloader для уникальных tracked-каналов. |
 | `GetStatuses(): IReadOnlyDictionary<string, bool>` | Строит статус из `GetActiveDownloads()`, не из локальной копии состояния. |
-| `StopAsync(cancellationToken): Task` | Отменяет и ожидает worker. |
+| `StopAsync(cancellationToken: CancellationToken): Task` | Отменяет и ожидает worker. |
 | `Dispose(): void` | Идемпотентно отменяет worker и освобождает примитивы синхронизации. |
 
 ## Важные детали
@@ -34,3 +34,9 @@ Parent: [[Index]]
 
 - Использует: [[modules/v2-app-settings]], [[modules/v2-twitch-downloader]].
 - Используется в: [[modules/v2-program]], [[modules/v2-telegram-service]].
+
+## Удалённый API старой схемы
+
+- ~~`MarkDownloadFinished(channel: string): void`~~ (удалён: 2026-09-10) — active-state принадлежит downloader.
+- ~~`IsChannelLive(channel: string, token: CancellationToken): bool`~~ (удалён: 2026-09-10) — live/offline возвращает playback client внутри downloader.
+- ~~`TryMarkDownloadStarted(channel: string): bool`~~ (удалён: 2026-09-10) — атомарность обеспечивает session registry downloader.

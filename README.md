@@ -1,66 +1,78 @@
-# 🎥 TwitchDownloader (устаревшее README.md)
+# TwitchDownloader
 
-Для актуальной версии `TwitchDownloader2.CLI` и запуска в Docker смотри
+Сервис автоматически записывает публичные Twitch-трансляции отслеживаемых каналов и
+управляется через Telegram-бота. Основная версия — `TwitchDownloader2.CLI` на .NET 10;
+legacy-проект `TwitchDownloader.CLI` остаётся без изменений.
+
+## Что умеет v2
+
+- Проверяет несколько каналов параллельно, но держит не больше одной сессии на канал.
+- Получает playback token и HLS напрямую через Twitch GraphQL/Usher без `yt-dlp`.
+- Выбирает source-качество, а при его отсутствии явно предупреждает о fallback.
+- Пишет один поток MPEG-TS или fMP4/CMAF, дедуплицирует HLS-сегменты и считает дыры.
+- Пропускает рекламу только по безопасному признаку `amazon`/`stitched` в заголовке `EXTINF`.
+- Создаёт `.mp4.part`, синхронизирует звук и проверяет длительность/A-V/DTS через `ffprobe`
+  перед публикацией итогового `.mp4`.
+- Позволяет остановить запись из главного меню Telegram. Частичная запись всё равно
+  финализируется; повторный старт этого канала запрещён до подтверждённого offline.
+- При остановке контейнера быстро закрывает `.recording` без финализации, а при следующем
+  запуске автоматически восстанавливает такие файлы в фоне.
+
+Поддерживаются публично доступные live-трансляции без cookies и subscriber-only авторизации.
+
+## Запуск в Docker
+
+```bash
+cp docker/.env.example docker/.env
+# заполнить TELEGRAM_BOT_TOKEN и TELEGRAM_OWNER_ID
+docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml logs -f
+```
+
+Настройки хранятся в `docker/data/`, записи — в `docker/downloads/`. Compose оставляет
+контейнеру 30 секунд на shutdown. Подробности и серверное обновление:
 [docker/README.md](docker/README.md).
 
-Консольное приложение для автоматического скачивания трансляций с Twitch через Telegram-бота с поддержкой многопоточной загрузки.
+## Локальный запуск v2
 
-## 🚀 Возможности
+Требуются .NET 10 SDK/runtime и доступные в `PATH` `ffmpeg` вместе с `ffprobe`.
 
-- 📥 **Автоматическое скачивание** стримов с отслеживаемых каналов
-- 🎭 **Параллельная загрузка** видео и аудиопотоков
-- 🤖 **Полное управление через Telegram-бота**:
-  - Добавление/удаление отслеживаемых каналов
-  - Ручная загрузка по ссылке
-  - Просмотр активных загрузок
-- 📁 **Автоматическая организация файлов**:
-  - Именование по шаблону: `[канал]_[тип]_[GUID].расширение`
-  - Сохранение в папку Downloads или указанный каталог
-- 🔔 **Уведомления о статусе**:
-  - Старт/завершение загрузки
-  - Ошибки в реальном времени
+```bash
+export TELEGRAM_BOT_TOKEN='...'
+export TELEGRAM_OWNER_ID='123456789'
+export DOWNLOAD_PATH="$PWD/Downloads" # необязательно
+dotnet run --project TwitchDownloader2.CLI/TwitchDownloader2.CLI.csproj
+```
 
-## 🛠️ Требования
+Для интерактивного запуска токен и ID можно ввести в консоли. В headless/Docker режиме
+они обязательны в environment.
 
-1. **Windows 10/11** (x64)
-2. **[.NET 8 Runtime](https://dotnet.microsoft.com/download)**
-3. **Права администратора** (для работы с процессами FFmpeg)
-4. Обязательные утилиты в PATH:
-   - [FFmpeg](https://ffmpeg.org/download.html)
-   - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
+## Проверка
 
-## ⚙️ Настройка
+```bash
+dotnet test TwitchDownloader.sln
+dotnet build TwitchDownloader2.CLI/TwitchDownloader2.CLI.csproj --configuration Release
+docker build -f docker/Dockerfile .
+```
 
-1. **Настройка бота**:
-   ```bash
-   # Создать файлы конфигурации
-   echo "BOT_TOKEN" > token
-   echo "YOUR_TELEGRAM_ID" > id
-   ```
-2. Запуск приложения:
-   ```
-   TwitchDownloader.CLI.exe [путь_для_сохранения]
-   ```
-4. Команды Telegram-бота:
-   ```
-   /start - Главное меню
-   📃 Список каналов - Показать отслеживаемые каналы
-   ➕ Добавить канал - Начать отслеживание нового канала
-   ➖ Удалить канал - Удалить канал из списка
-   ⏬ Скачать сейчас - Ручная загрузка по ссылке
-   ```
-## 🔄 Логика работы
-1. Автоскачивание:
-   - Проверка активных трансляций каждую минуту
-   - Параллельная загрузка:
-      - Видеопоток (самое высокое качество из доступных)
-      - Аудиопоток 1 (оригинальный)
-      - Аудиопоток 2 (резервный)
-2. Ручная загрузка
-3. Файловая структура:
-   ```
-   📂 Указанная_папка/
-   └── 📄 channel_video_abc123.mp4
-   └── 📄 channel_audio1_abc123.aac
-   └── 📄 channel_audio2_abc123.aac
-   ```
+Тесты покрывают HLS parser/client, рекламу и sequence, fMP4 init-сегменты, retry/token
+refresh, конкурентные сессии, Telegram callback, pause-until-offline, финализацию и recovery.
+
+## Форматы файлов v2
+
+Активное сырьё:
+
+```text
+live_<channel>_<yyyyMMdd-HHmmss>_source_<sessionId>.recording
+```
+
+После успешной проверки остаётся одноимённый `.mp4`. При ошибке сохраняются
+`.recording.failed` и `.mp4.failed`. Если ffmpeg не успел создать media-кандидат,
+`.mp4.failed` содержит диагностическое сообщение. Старые `*_video_*.ts` и
+`*_audio_*.aac` автоматическое восстановление не трогает.
+
+## Legacy v1
+
+`TwitchDownloader.CLI` — прежняя Windows/.NET 8 версия с отдельными видео- и
+аудиопроцессами. Ей по-прежнему нужны `yt-dlp` и `ffmpeg`; новая серверная схема касается
+только `TwitchDownloader2.CLI`.

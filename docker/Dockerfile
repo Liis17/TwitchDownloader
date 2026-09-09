@@ -19,7 +19,6 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         ca-certificates \
         ffmpeg \
-        yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish/ .

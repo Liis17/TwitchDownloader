@@ -4,7 +4,7 @@
 
 ## О проекте
 
-**TwitchDownloader** — консольное приложение для автоматического скачивания трансляций с Twitch через Telegram-бота. Управление осуществляется полностью через Telegram: добавление/удаление отслеживаемых каналов, ручная загрузка по ссылке, мониторинг статусов. Загрузка ведётся параллельно несколькими потоками (видео + аудио) через `ffmpeg`, ссылки на HLS получаются через `yt-dlp`.
+**TwitchDownloader** — консольное приложение для автоматической записи публичных Twitch-трансляций через Telegram-бота. V2 напрямую получает Twitch HLS, держит одну запись на канал, создаёт проверенный MP4 и умеет отменять сессию по UUID с защитой повторного старта до offline.
 
 В репозитории сосуществуют **две версии**:
 - `TwitchDownloader.CLI` — первая версия (.NET 8, требует прав администратора, файлы `token`/`id` для конфигурации).
@@ -33,12 +33,13 @@
 | [[modules/v2-twitch-playback]] | `TwitchPlaybackClient` | Прямой Twitch GraphQL/Usher и разбор HLS playlist |
 | [[modules/v2-media-recording]] | `LiveStreamRecorder` / `MediaFinalizer` | Запись HLS-сегментов, проверка MP4 и восстановление сырья |
 | [[modules/v2-keyboards]] | `Keyboards` | Reply/inline-клавиатуры бота |
+| [[modules/v2-tests]] | `TwitchDownloader2.CLI.Tests` | xUnit-проверки HLS, сессий, Telegram, shutdown и recovery |
 
 ### Внешние интерфейсы и развёртывание
 | Файл | Компонент | Описание |
 |------|-----------|----------|
 | [[api/telegram-commands]] | Telegram API | Команды, кнопки и callback'и v2 |
-| [[api/external-tools]] | `yt-dlp` / `ffmpeg` | Внешние процессы и ключевые аргументы |
+| [[api/external-tools]] | `ffmpeg` / `ffprobe` | Media-финализация v2 и legacy-зависимости v1 |
 | [[api/docker]] | Docker Compose | Образ, env-файл, volumes и запуск v2 |
 | [[Deployment/updatetwitch]] | `scripts/updatetwitch` | Безопасное обновление сервера одной командой |
 
@@ -53,7 +54,7 @@
 | Runtime v1 | .NET 8 (`net8.0-windows10.0.26100.0`, x64) |
 | Runtime v2 | .NET 10 (`net10.0`) |
 | Telegram | `Telegram.Bot` 22.0.2 (v1) / 22.7.4 (v2) |
-| Внешние CLI | `ffmpeg`, `yt-dlp` (должны быть в PATH) |
+| Внешние CLI | v2: `ffmpeg`, `ffprobe`; v1: также `yt-dlp` |
 | Сериализация | `System.Text.Json` + Base64 (v2) |
 | Платформа | v1: Windows 10/11; v2: Windows, macOS, Linux и Docker |
 | Развёртывание | Docker multi-stage + Compose; updater на Bash |
@@ -62,12 +63,12 @@
 
 | Файл | Назначение |
 |------|-----------|
-| `TwitchDownloader.sln` | Solution-файл, объединяет обе версии |
+| `TwitchDownloader.sln` | Solution-файл, объединяет обе версии и тестовый проект v2 |
 | `TwitchDownloader2.CLI/Program.cs` | Точка входа v2 |
 | `TwitchDownloader2.CLI/AppSettings.cs` | Настройки v2 (Base64 JSON) |
 | `TwitchDownloader.CLI/Program.cs` | Точка входа v1, проверка прав администратора |
 | `README.md` | Описание возможностей и инструкции запуска |
-| `docker/Dockerfile` | Сборка и runtime-образ v2 с `ffmpeg` и `yt-dlp` |
+| `docker/Dockerfile` | Сборка и runtime-образ v2 с `ffmpeg`/`ffprobe` |
 | `docker/docker-compose.yml` | Сервис v2 и volumes для настроек/загрузок |
 | `scripts/updatetwitch` | Проверка репозитория, обновление, сборка и восстановление контейнера |
 

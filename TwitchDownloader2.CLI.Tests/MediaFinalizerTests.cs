@@ -114,11 +114,31 @@ public sealed class MediaFinalizerTests
         Assert.True(File.Exists(Path.Combine(temporaryDirectory.Path, "live_channel.mp4.failed")));
     }
 
+    [Fact]
+    public async Task FinalizeAsync_CreatesFailedArtifactsWhenFfmpegProducesNoCandidate()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var rawPath = Path.Combine(temporaryDirectory.Path, "live_channel.recording");
+        await File.WriteAllTextAsync(rawPath, "raw-media");
+        var finalizer = new MediaFinalizer(new FakeMediaToolRunner { FfmpegExitCode = 1 });
+
+        var result = await finalizer.FinalizeAsync(
+            rawPath,
+            expectedDurationSeconds: 10,
+            RecordingContainer.MpegTs,
+            CancellationToken.None);
+
+        Assert.Equal(MediaFinalizeStatus.Failed, result.Status);
+        Assert.True(File.Exists(rawPath + ".failed"));
+        Assert.True(File.Exists(Path.Combine(temporaryDirectory.Path, "live_channel.mp4.failed")));
+    }
+
     private sealed class FakeMediaToolRunner : IMediaToolRunner
     {
         public string ProbeOutput { get; init; } = string.Empty;
         public string DecodeOutput { get; init; } = string.Empty;
         public bool ThrowOnProbe { get; init; }
+        public int FfmpegExitCode { get; init; }
 
         public Task<MediaToolResult> RunAsync(
             string executable,
@@ -134,6 +154,9 @@ public sealed class MediaFinalizerTests
 
             if (arguments[^1] == "-")
                 return Task.FromResult(new MediaToolResult(0, string.Empty, DecodeOutput));
+
+            if (FfmpegExitCode != 0)
+                return Task.FromResult(new MediaToolResult(FfmpegExitCode, string.Empty, "encoding failed"));
 
             var outputPath = arguments[^1];
             File.WriteAllText(outputPath, "valid-mp4");

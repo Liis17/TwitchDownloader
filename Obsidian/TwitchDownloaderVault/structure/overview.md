@@ -6,7 +6,7 @@ Parent: [[Index]]
 
 ```
 TwitchDownloader/
-├── TwitchDownloader.sln           # Solution с двумя проектами
+├── TwitchDownloader.sln           # Solution: два приложения и тесты v2
 ├── README.md                      # Описание и инструкции
 ├── .gitignore / .gitattributes
 │
@@ -26,13 +26,22 @@ TwitchDownloader/
 │   ├── AppSettings.cs             # Настройки (Base64-encoded JSON)
 │   ├── TelegramService.cs         # Бот с триггерами состояний
 │   ├── TwitchCheckerService.cs    # Фоновая проверка live-статуса
-│   ├── TwitchDownloaderService.cs # Запуск ffmpeg, хеш-дедупликация
+│   ├── TwitchDownloaderService.cs # Владелец live-сессий и отмены
+│   ├── TwitchPlaybackClient.cs    # Twitch GraphQL/Usher HTTP
+│   ├── HlsPlaylistParser.cs       # Master/media HLS parser
+│   ├── LiveStreamRecorder.cs      # Запись TS/fMP4 сегментов
+│   ├── MediaFinalizer.cs          # MP4 validation и recovery
+│   ├── MediaToolRunner.cs         # Адаптер ffmpeg/ffprobe
 │   ├── Keyboards.cs               # Reply/Inline клавиатуры бота
 │   ├── Properties/
 │   │   ├── PublishProfiles/
 │   │   └── launchSettings.json
 │   ├── TwitchDownloader2.CLI.csproj
 │   └── bin/ obj/
+│
+├── TwitchDownloader2.CLI.Tests/   # xUnit-тесты серверного v2
+│   ├── *Tests.cs                  # HLS, recorder, sessions, Telegram, recovery
+│   └── TwitchDownloader2.CLI.Tests.csproj
 │
 ├── docker/                         # Dockerfile, Compose и env-шаблон v2
 │   ├── Dockerfile
@@ -53,8 +62,12 @@ TwitchDownloader/
 ### `TwitchDownloader2.CLI/` — версия 2 (актуальная)
 .NET 10 проект. Конфигурация хранится в `Data/settings.data` (Base64-encoded JSON). Управление через Reply-клавиатуры Telegram. Архитектура разделена на статически связанные через `Program` сервисы. См. [[modules/v2-program]].
 
+### `TwitchDownloader2.CLI.Tests/` — тесты v2
+xUnit-проект на .NET 10 с подставными HTTP/process/delay-адаптерами. Проверяет HLS,
+конкурентные сессии, отмену, persisted pause, shutdown и recovery. См. [[modules/v2-tests]].
+
 ### `docker/` и `scripts/` — развёртывание
-Dockerfile собирает v2 на .NET 10 и устанавливает `ffmpeg`/`yt-dlp`; Compose
+Dockerfile собирает v2 на .NET 10 и устанавливает `ffmpeg`/`ffprobe`; Compose
 монтирует `Data` и `Downloads`. `scripts/updatetwitch` обновляет ветку `master`,
 пересобирает образ и пытается восстановить контейнер при ошибке. См. [[api/docker]]
 и [[Deployment/updatetwitch]].

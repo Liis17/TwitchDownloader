@@ -107,7 +107,7 @@ namespace TwitchDownloader2.CLI
                 playbackClient,
                 new ProcessMediaToolRunner(),
                 notifications,
-                settings.Save,
+                settings.SaveOrThrow,
                 new SystemAsyncDelay())
         {
         }
@@ -171,7 +171,20 @@ namespace TwitchDownloader2.CLI
             if (playback.Status == TwitchPlaybackStatus.Offline)
             {
                 if (_settings.RemovePausedChannel(normalizedChannel))
-                    SaveSettingsSafely();
+                {
+                    try
+                    {
+                        _saveSettings();
+                    }
+                    catch (Exception ex)
+                    {
+                        _settings.AddPausedChannel(normalizedChannel);
+                        ConsoleWriteLine(
+                            $"Offline подтверждён, но не удалось сохранить снятие паузы '{normalizedChannel}': {ex.Message}",
+                            System.ConsoleColor.DarkRed);
+                        return StartDownloadResult.Failed;
+                    }
+                }
                 return StartDownloadResult.Offline;
             }
 
@@ -268,8 +281,27 @@ namespace TwitchDownloader2.CLI
                 session.StopRequested = true;
             }
 
-            if (_settings.AddPausedChannel(session.Channel))
-                SaveSettingsSafely();
+            var pauseAdded = _settings.AddPausedChannel(session.Channel);
+            try
+            {
+                _saveSettings();
+            }
+            catch (Exception ex)
+            {
+                if (pauseAdded)
+                    _settings.RemovePausedChannel(session.Channel);
+                lock (_gate)
+                {
+                    if (_sessionsById.ContainsKey(session.SessionId)
+                        && session.State == ActiveDownloadState.Recording)
+                    {
+                        session.StopRequested = false;
+                    }
+                }
+                throw new InvalidOperationException(
+                    $"Не удалось сохранить паузу для канала '{session.Channel}'; запись продолжена.",
+                    ex);
+            }
 
             CancelSafely(session.RecordingCancellation);
             ConsoleWriteLine($"Остановка сессии {session.SessionId} для '{session.Channel}' принята.");
@@ -471,18 +503,6 @@ namespace TwitchDownloader2.CLI
         {
             lock (_gate)
                 return session.SkipFinalization || _shutdownRequested;
-        }
-
-        private void SaveSettingsSafely()
-        {
-            try
-            {
-                _saveSettings();
-            }
-            catch (Exception ex)
-            {
-                ConsoleWriteLine($"Не удалось сохранить паузу канала: {ex.Message}", System.ConsoleColor.DarkRed);
-            }
         }
 
         private static ActiveDownloadInfo ToInfo(DownloadSession session)

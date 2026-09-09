@@ -1,6 +1,6 @@
 # TwitchDownloader
 
-TwitchDownloader — консольное приложение на C# для мониторинга Twitch-каналов и скачивания трансляций через Telegram-бота. В репозитории есть legacy-версия на .NET 8 и основная кроссплатформенная версия на .NET 10, которая использует `yt-dlp`, `ffmpeg` и поддерживает Docker.
+TwitchDownloader — консольное приложение на C# для мониторинга Twitch-каналов и скачивания трансляций через Telegram-бота. В репозитории есть legacy-версия на .NET 8 и основная кроссплатформенная версия на .NET 10. V2 получает HLS напрямую через Twitch GraphQL/Usher, использует `ffmpeg`/`ffprobe` для финализации и поддерживает Docker; `yt-dlp` остался только в legacy v1.
 
 ## База знаний — Obsidian
 
@@ -34,6 +34,7 @@ TwitchDownloader — консольное приложение на C# для м
 ## Быстрые команды
 
 ```bash
+dotnet test TwitchDownloader.sln
 dotnet build TwitchDownloader.sln -p:EnableWindowsTargeting=true
 dotnet run --project TwitchDownloader2.CLI/TwitchDownloader2.CLI.csproj
 docker compose -f docker/docker-compose.yml up -d --build
