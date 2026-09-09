@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly PROJECT_DIR="/opt/TwitchDownloader"
+readonly BRANCH="master"
+readonly COMPOSE_FILE="docker/docker-compose.yml"
+
+log() {
+    printf '[updatetwitch] %s\n' "$*"
+}
+
+fail() {
+    log "ОШИБКА: $*" >&2
+    exit 1
+}
+
+command -v git >/dev/null 2>&1 || fail "Команда git не найдена."
+command -v docker >/dev/null 2>&1 || fail "Команда docker не найдена."
+
+[[ -e "$PROJECT_DIR/.git" ]] || fail "Каталог $PROJECT_DIR не является Git-репозиторием."
+[[ -f "$PROJECT_DIR/$COMPOSE_FILE" ]] || fail "Не найден файл $PROJECT_DIR/$COMPOSE_FILE."
+[[ -f "$PROJECT_DIR/docker/.env" ]] || fail "Не найден $PROJECT_DIR/docker/.env. Создайте его из docker/.env.example."
+
+cd "$PROJECT_DIR"
+
+CURRENT_BRANCH="$(git branch --show-current)"
+[[ "$CURRENT_BRANCH" == "$BRANCH" ]] || fail "Ожидалась ветка $BRANCH, сейчас выбрана $CURRENT_BRANCH."
+
+git remote get-url origin >/dev/null 2>&1 || fail "Не найден Git remote origin."
+
+if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+    fail "В репозитории есть незакоммиченные изменения. Сначала сохраните их или уберите."
+fi
+
+OLD_COMMIT="$(git rev-parse --short HEAD)"
+log "Обновляю ветку $BRANCH из origin..."
+git pull --ff-only origin "$BRANCH"
+NEW_COMMIT="$(git rev-parse --short HEAD)"
+
+if [[ "$OLD_COMMIT" == "$NEW_COMMIT" ]]; then
+    log "Новых коммитов нет; образ всё равно будет пересобран."
+else
+    log "Репозиторий обновлён: $OLD_COMMIT -> $NEW_COMMIT."
+fi
+
+COMPOSE=(docker compose -f "$COMPOSE_FILE")
+CONTAINER_STOPPED=0
+
+restore_previous_container() {
+    local exit_code=$?
+
+    if (( CONTAINER_STOPPED == 1 )); then
+        log "Сборка или запуск завершились ошибкой; запускаю прежний контейнер..."
+        "${COMPOSE[@]}" start || log "Не удалось автоматически запустить прежний контейнер."
+    fi
+
+    exit "$exit_code"
+}
+
+trap restore_previous_container ERR
+
+log "Останавливаю контейнер..."
+"${COMPOSE[@]}" stop
+CONTAINER_STOPPED=1
+
+log "Собираю новый Docker-образ..."
+"${COMPOSE[@]}" build --pull
+
+log "Запускаю обновлённый контейнер..."
+"${COMPOSE[@]}" up -d --force-recreate --remove-orphans
+CONTAINER_STOPPED=0
+trap - ERR
+
+log "Готово. Текущее состояние:"
+"${COMPOSE[@]}" ps

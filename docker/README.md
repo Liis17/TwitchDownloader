@@ -35,6 +35,29 @@ docker compose -f docker/docker-compose.yml logs -f
 docker compose -f docker/docker-compose.yml down
 ```
 
+## Автообновление на сервере
+
+Скрипт `scripts/updatetwitch` обновляет ветку `master`, останавливает контейнер,
+пересобирает образ и запускает его снова. Если сборка или запуск завершатся
+ошибкой, скрипт попытается запустить прежний контейнер.
+
+Один раз на сервере создай команду, доступную из любого каталога:
+
+```bash
+chmod +x /opt/TwitchDownloader/scripts/updatetwitch
+ln -s /opt/TwitchDownloader/scripts/updatetwitch /usr/local/bin/updatetwitch
+```
+
+После этого обновление выполняется одной командой:
+
+```bash
+updatetwitch
+```
+
+Скрипт не перезаписывает `docker/.env` и не удаляет volumes с настройками и
+скачанными файлами. Проект фиксирован в `/opt/TwitchDownloader`, ветка —
+`master`.
+
 Настройки и скачанные файлы сохраняются в `docker/data/` и `docker/downloads/`.
 Токен и ID берутся из env и не записываются в `Data/settings.data`.
 
