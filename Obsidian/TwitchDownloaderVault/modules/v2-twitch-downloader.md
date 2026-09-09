@@ -3,7 +3,7 @@
 Parent: [[index]]
 
 ## Назначение
-Запускает параллельную ffmpeg-сессию для скачивания live-стрима: 2 видеопотока + 2 аудиопотока в отдельных окнах cmd. После завершения сравнивает файлы по SHA256 и удаляет дубликаты. Шлёт уведомления в Telegram через [[modules/v2-telegram-service]].
+Запускает параллельную ffmpeg-сессию для скачивания live-стрима: 2 видеопотока + 2 аудиопотока. После завершения сравнивает файлы по SHA256 и удаляет дубликаты. Шлёт уведомления в Telegram через [[modules/v2-telegram-service]].
 
 ## Файлы
 - `TwitchDownloader2.CLI/TwitchDownloaderService.cs`
@@ -28,17 +28,17 @@ Parent: [[index]]
 | `StartDownload(channelName)` | Async-метод: генерирует sessionCode → шлёт уведомления в Telegram → резолвит HLS → регистрирует `DownloadSession` в `_activeSessions` → стартует фоновый поток `RunDownloadSession` |
 | `GetActiveDownloads()` | Возвращает `IReadOnlyList<string>` с именами каналов, у которых сейчас активная сессия. Используется кнопкой Telegram «⛔ Завершить загрузку» |
 | `StopDownload(channel)` | Помечает сессию `ForcedByUser=true` и `Kill(entireProcessTree:true)` для всех процессов. Возвращает `false` если активной сессии нет |
-| `RunDownloadSession(session, hlsUrl, fv1, fv2, fa1, fa2)` | Запускает 4 ffmpeg-процесса, `WaitAny` → 10-сек таймер на остальных → при необходимости Kill, проверяет хеши, удаляет дубликаты, ветвится по типу завершения и шлёт уведомление |
+| `RunDownloadSession(session, hlsUrl, files)` | Запускает 4 ffmpeg-процесса, `WaitAny` → 10-сек таймер на остальных → при необходимости Kill, проверяет хеши, удаляет дубликаты, ветвится по типу завершения и шлёт уведомление |
 | `static FilesEqualByHash(p1, p2)` | SHA256-сравнение двух файлов |
 | `static SafeDelete(path)` | `File.Delete` с проглатыванием исключений |
 | `ResolveHlsUrl(channel)` | `yt-dlp --no-warnings --get-url https://www.twitch.tv/{channel}` → первая строка stdout |
-| `StartFfmpegInNewWindow(title, args)` | Запуск `cmd.exe /c start "title" /WAIT ffmpeg <args>` |
+| `StartFfmpegProcess(hlsUrl, outputPath, audioOnly)` | Кроссплатформенный прямой запуск `ffmpeg` через `ProcessStartInfo.ArgumentList` |
 | `GenerateCode(len)` | Случайная строка из `[a-zA-Z0-9]` |
 
 ## Логика завершения сессии
 1. `Task.WaitAny(waitTasks)` — ждём, пока хоть один ffmpeg закроется.
 2. `Task.WaitAll(waitTasks, 10s)` — даём оставшимся 10 секунд на самозакрытие. При штатном завершении стрима все четверо закрываются почти одновременно.
-3. Если по таймауту кто-то ещё жив — все процессы убиваются через `Process.Kill(entireProcessTree: true)`. `Process.Kill` работает корректно даже при цепочке `cmd.exe /c start /WAIT ffmpeg` — `start` сохраняет parent-child связь, дерево обходится по PPID.
+3. Если по таймауту кто-то ещё жив — все процессы убиваются через `Process.Kill(entireProcessTree: true)`.
 4. В `finally` — три возможных уведомления в Telegram:
 
 | Состояние | Сообщение | `ForceCheck`? |
@@ -67,7 +67,8 @@ Parent: [[index]]
 - Используется в: [[modules/v2-program]] (создаётся в `Main`), [[modules/v2-twitch-checker]] (вызов `StartDownload`)
 
 ## Важные детали
-- **Окна cmd видимы** (`CreateNoWindow = false`) — каждый ffmpeg запускается в отдельном окне с заголовком `[TD2] {channel} video #N`.
+- `ffmpeg` запускается напрямую из `PATH` с `CreateNoWindow = true`; это работает в Windows, macOS, Linux и Docker.
+- В аргументы добавлен `-nostdin`, чтобы дочерние процессы не блокировали headless-контейнер.
 - Заявлен `async Task StartDownload`, но внутри запускается обычный фоновый `Thread` для `RunDownloadSession` — после `Thread.Start()` метод возвращается. Уведомление об окончании отправляется из самого потока.
 - `Thread.Sleep(1000)` между двумя уведомлениями в `StartDownload` — задержка для предотвращения склейки сообщений Telegram'ом.
 - Дедупликация постфактум: оба видеопотока скачиваются одинаковые → один удаляется. Сделано на случай разрывов и невозможности докачать середину одного из дублей.

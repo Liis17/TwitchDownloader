@@ -1,0 +1,15 @@
+services:
+  twitch-downloader:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    env_file:
+      - .env
+    environment:
+      DOWNLOAD_PATH: /app/Downloads
+    volumes:
+      - ./data:/app/Data
+      - ./downloads:/app/Downloads
+    init: true
+    stop_signal: SIGINT
+    stop_grace_period: 30s
