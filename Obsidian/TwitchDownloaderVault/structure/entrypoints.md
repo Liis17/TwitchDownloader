@@ -1,6 +1,6 @@
 # Точки входа и запуск
 
-Parent: [[index]]
+Parent: [[Index]]
 
 ## Версия 2 — `TwitchDownloader2.CLI/Program.cs`
 

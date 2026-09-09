@@ -1,6 +1,6 @@
 # Структура проекта
 
-Parent: [[index]]
+Parent: [[Index]]
 
 ## Дерево директорий
 
@@ -34,6 +34,13 @@ TwitchDownloader/
 │   ├── TwitchDownloader2.CLI.csproj
 │   └── bin/ obj/
 │
+├── docker/                         # Dockerfile, Compose и env-шаблон v2
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── .env.example
+│   └── README.md
+├── scripts/updatetwitch             # Серверное автообновление
+│
 └── Obsidian/
     └── TwitchDownloaderVault/     # Эта vault-память проекта
 ```
@@ -45,6 +52,12 @@ TwitchDownloader/
 
 ### `TwitchDownloader2.CLI/` — версия 2 (актуальная)
 .NET 10 проект. Конфигурация хранится в `Data/settings.data` (Base64-encoded JSON). Управление через Reply-клавиатуры Telegram. Архитектура разделена на статически связанные через `Program` сервисы. См. [[modules/v2-program]].
+
+### `docker/` и `scripts/` — развёртывание
+Dockerfile собирает v2 на .NET 10 и устанавливает `ffmpeg`/`yt-dlp`; Compose
+монтирует `Data` и `Downloads`. `scripts/updatetwitch` обновляет ветку `master`,
+пересобирает образ и пытается восстановить контейнер при ошибке. См. [[api/docker]]
+и [[Deployment/updatetwitch]].
 
 ### `Obsidian/TwitchDownloaderVault/`
 Долговременная память проекта в формате Obsidian Vault. Связи между заметками через wikilinks.

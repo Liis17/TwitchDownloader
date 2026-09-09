@@ -1,6 +1,6 @@
 # v2: Keyboards
 
-Parent: [[index]]
+Parent: [[Index]]
 
 ## Назначение
 Фабрика всех reply/inline клавиатур Telegram-бота v2. Статические методы возвращают готовые `ReplyKeyboardMarkup` / `InlineKeyboardMarkup`.

@@ -1,6 +1,6 @@
 # Docker: TwitchDownloader2
 
-Parent: [[index]]
+Parent: [[Index]]
 
 ## Файлы
 - `docker/Dockerfile` — multi-stage образ на базе .NET 10; устанавливает `ffmpeg` и `yt-dlp`.

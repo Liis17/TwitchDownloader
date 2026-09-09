@@ -1,6 +1,6 @@
 # Telegram-команды (v2)
 
-Parent: [[index]]
+Parent: [[Index]]
 
 Все команды обрабатываются в `HandleUpdateAsync` файла `TwitchDownloader2.CLI/TelegramService.cs`. Доступ только для пользователя с `Id == Program.Settings.TelegramIdOwner`.
 

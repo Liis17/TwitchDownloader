@@ -1,6 +1,6 @@
 # Внешние зависимости
 
-Parent: [[index]]
+Parent: [[Index]]
 
 Приложение запускает два внешних CLI-инструмента через `System.Diagnostics.Process`. Оба обязаны быть в `PATH`.
 

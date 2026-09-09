@@ -1,6 +1,6 @@
 # v2: TwitchCheckerService
 
-Parent: [[index]]
+Parent: [[Index]]
 
 ## Назначение
 Фоновый сервис, который раз в минуту опрашивает все каналы из `Program.Settings.TrackedChannels`, определяет идёт ли live, и при обнаружении стрима — инициирует загрузку через [[modules/v2-twitch-downloader]]. Поддерживает принудительный сброс ожидания через `ForceCheck()`.

@@ -1,6 +1,6 @@
 # v1: TwitchDownloader.CLI (legacy)
 
-Parent: [[index]]
+Parent: [[Index]]
 
 ## Назначение
 Первая версия проекта. Требует прав администратора, использует inline-кнопки в Telegram (а не reply-клавиатуры как в v2), хранит каналы в plain-text файле. Сохранена в репозитории как legacy.

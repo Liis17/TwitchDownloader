@@ -1,6 +1,6 @@
 # v2: TwitchDownloaderService
 
-Parent: [[index]]
+Parent: [[Index]]
 
 ## Назначение
 Запускает параллельную ffmpeg-сессию для скачивания live-стрима: 2 видеопотока + 2 аудиопотока. После завершения сравнивает файлы по SHA256 и удаляет дубликаты. Шлёт уведомления в Telegram через [[modules/v2-telegram-service]].
