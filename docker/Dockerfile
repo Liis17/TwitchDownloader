@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0-bookworm-slim AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 WORKDIR /src
 
 COPY TwitchDownloader2.CLI/TwitchDownloader2.CLI.csproj TwitchDownloader2.CLI/
@@ -12,7 +12,7 @@ RUN dotnet publish TwitchDownloader2.CLI/TwitchDownloader2.CLI.csproj \
     --no-restore \
     --output /app/publish
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0-bookworm-slim
+FROM mcr.microsoft.com/dotnet/runtime:10.0-noble
 WORKDIR /app
 
 RUN apt-get update \
