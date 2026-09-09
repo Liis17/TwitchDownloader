@@ -5,6 +5,7 @@
         private static string _serviceName = "CLI";
         private static DateTime _startTime = DateTime.Now;
         private static ConsoleColor _consoleColor = ConsoleColor.DarkGreen;
+        private static readonly ManualResetEventSlim ShutdownEvent = new(false);
         public static TelegramService TelegramServiceInstance { get; private set; }
         public static AppSettings Settings { get; private set; } = AppSettings.Load();
         public static TwitchCheckerService TwitchChecker { get; private set; }
@@ -35,21 +36,64 @@
         }
         private static void Exit()
         {
-            bool exit = true;
-            while (exit)
+            Console.CancelKeyPress += HandleCancelKeyPress;
+            AppDomain.CurrentDomain.ProcessExit += HandleProcessExit;
+
+            try
             {
-                var stopWord = Console.ReadLine();
-                if (stopWord == "STOP")
+                if (Console.IsInputRedirected)
                 {
-                    exit = false;
+                    ConsoleWriteLine("Сервисы запущены. Ожидание сигнала завершения...");
+                    ShutdownEvent.Wait();
                 }
-                ConsoleWriteLine("Для выхода введи STOP или нажмите Ctrl+C");
+                else
+                {
+                    bool exit = false;
+                    while (!exit)
+                    {
+                        var stopWord = Console.ReadLine();
+                        if (stopWord is null || string.Equals(stopWord.Trim(), "STOP", StringComparison.OrdinalIgnoreCase))
+                        {
+                            exit = true;
+                        }
+                        else
+                        {
+                            ConsoleWriteLine("Для выхода введи STOP или нажмите Ctrl+C");
+                        }
+                    }
+                }
             }
-            Settings.Save();
-            TelegramServiceInstance.Stop();
+            finally
+            {
+                Settings.Save();
+                TelegramServiceInstance.Stop();
+                TwitchChecker.Dispose();
+
+                Console.CancelKeyPress -= HandleCancelKeyPress;
+                AppDomain.CurrentDomain.ProcessExit -= HandleProcessExit;
+            }
         }
+
+        private static void HandleCancelKeyPress(object? sender, ConsoleCancelEventArgs args)
+        {
+            args.Cancel = true;
+            ShutdownEvent.Set();
+        }
+
+        private static void HandleProcessExit(object? sender, EventArgs args)
+        {
+            ShutdownEvent.Set();
+        }
+
         private static void SettingsChecker()
         {
+            if (Console.IsInputRedirected && !HasRequiredTelegramSettings())
+            {
+                throw new InvalidOperationException(
+                    $"Для запуска без интерактивного ввода задайте {AppSettings.TelegramTokenEnvironmentVariable} и " +
+                    $"{AppSettings.TelegramOwnerIdEnvironmentVariable} через переменные окружения.");
+            }
+
             if (string.IsNullOrEmpty(Settings.TelegramToken))
             {
                 ConsoleWriteLine("Не найдет токен бота в настройках");
@@ -64,24 +108,34 @@
             {
                 ConsoleWriteLine("Не найдет ID администратора");
                 ConsoleWriteLine("Введите ID администратора: ");
-                var token = Console.ReadLine();
-                if (!string.IsNullOrWhiteSpace(token))
+                var ownerIdText = Console.ReadLine();
+                if (!string.IsNullOrWhiteSpace(ownerIdText))
                 {
-                    try
+                    if (long.TryParse(ownerIdText, out var ownerId) && ownerId > 0)
                     {
-                        Settings.TelegramIdOwner = long.Parse(token);
+                        Settings.TelegramIdOwner = ownerId;
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        ConsoleWriteLine($"Ошибка при вводе ID администратора: {ex.Message}", Console.ForegroundColor = ConsoleColor.DarkRed);
+                        ConsoleWriteLine("ID администратора должен быть положительным числом", ConsoleColor.DarkRed);
                     }
                 }
             }
 
             /// Тут будут проверки других настроек
 
+            if (!HasRequiredTelegramSettings())
+            {
+                throw new InvalidOperationException("Не удалось получить обязательные настройки Telegram-бота.");
+            }
+
             Settings.Save();
 
+        }
+
+        private static bool HasRequiredTelegramSettings()
+        {
+            return !string.IsNullOrWhiteSpace(Settings.TelegramToken) && Settings.TelegramIdOwner > 0;
         }
 
         private static void ConsoleWriteLine(string message, ConsoleColor color = ConsoleColor.Gray)

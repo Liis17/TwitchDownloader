@@ -15,6 +15,8 @@ namespace TwitchDownloader2.CLI
         private readonly ConcurrentDictionary<string, DownloadSession> _activeSessions
             = new(StringComparer.OrdinalIgnoreCase);
 
+        private sealed record DownloadFiles(string Video1, string Video2, string Audio1, string Audio2);
+
         private sealed class DownloadSession
         {
             public string Channel = string.Empty;
@@ -57,13 +59,19 @@ namespace TwitchDownloader2.CLI
             $"🔔 По завершению стрима придет уведомление";
             await Program.TelegramServiceInstance.SendNotification(message);
             Thread.Sleep(1000);
-            var path = Program.Settings.DownloadPath;
+
+            var files = new DownloadFiles(
+                Path.Combine(_downloadRoot, $"{channel}_video_1_{sessionCode}.ts"),
+                Path.Combine(_downloadRoot, $"{channel}_video_2_{sessionCode}.ts"),
+                Path.Combine(_downloadRoot, $"{channel}_audio_1_{sessionCode}.aac"),
+                Path.Combine(_downloadRoot, $"{channel}_audio_2_{sessionCode}.aac"));
+
             var message2 = $"" +
                 $"📂 <b>Файлы этой транцляции:</b>\n" +
-                $"<pre>🎞️ {path}\\{channel}_video_1_{sessionCode}.ts\n" +
-                $"🎞️ {path}\\{channel}_video_2_{sessionCode}.ts\n" +
-                $"🎵 {path}\\{channel}_audio_1_{sessionCode}.aac\n" +
-                $"🎵 {path}\\{channel}_audio_2_{sessionCode}.aac</pre>";
+                $"<pre>🎞️ {files.Video1}\n" +
+                $"🎞️ {files.Video2}\n" +
+                $"🎵 {files.Audio1}\n" +
+                $"🎵 {files.Audio2}</pre>";
 
             await Program.TelegramServiceInstance.SendNotification(message2);
 
@@ -75,15 +83,10 @@ namespace TwitchDownloader2.CLI
                 return;
             }
 
-            string fileVideo1 = Path.Combine(_downloadRoot, $"{channel}_video_1_{sessionCode}.ts");
-            string fileVideo2 = Path.Combine(_downloadRoot, $"{channel}_video_2_{sessionCode}.ts");
-            string fileAudio1 = Path.Combine(_downloadRoot, $"{channel}_audio_1_{sessionCode}.aac");
-            string fileAudio2 = Path.Combine(_downloadRoot, $"{channel}_audio_2_{sessionCode}.aac");
-
             var session = new DownloadSession { Channel = channel, SessionCode = sessionCode };
             _activeSessions[channel] = session;
 
-            var worker = new Thread(() => RunDownloadSession(session, hlsUrl, fileVideo1, fileVideo2, fileAudio1, fileAudio2))
+            var worker = new Thread(() => RunDownloadSession(session, hlsUrl, files))
             {
                 IsBackground = true,
                 Name = $"DL-{channel}-{sessionCode}"
@@ -121,7 +124,7 @@ namespace TwitchDownloader2.CLI
             return true;
         }
 
-        private void RunDownloadSession(DownloadSession session, string hlsUrl, string fileVideo1, string fileVideo2, string fileAudio1, string fileAudio2)
+        private void RunDownloadSession(DownloadSession session, string hlsUrl, DownloadFiles files)
         {
             var channel = session.Channel;
             var sessionCode = session.SessionCode;
@@ -136,15 +139,24 @@ namespace TwitchDownloader2.CLI
                     return;
                 }
 
-                string common = "-hide_banner -loglevel warning -y -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_delay_max 10";
-
-                var started = new List<Process>
+                var started = new List<Process>();
+                try
                 {
-                    StartFfmpegInNewWindow($"[TD2] {channel} video #1", $"{common} -i \"{hlsUrl}\" -c copy -f mpegts \"{fileVideo1}\""),
-                    StartFfmpegInNewWindow($"[TD2] {channel} video #2", $"{common} -i \"{hlsUrl}\" -c copy -f mpegts \"{fileVideo2}\""),
-                    StartFfmpegInNewWindow($"[TD2] {channel} audio #1", $"{common} -i \"{hlsUrl}\" -vn -c:a aac -b:a 160k -f adts \"{fileAudio1}\""),
-                    StartFfmpegInNewWindow($"[TD2] {channel} audio #2", $"{common} -i \"{hlsUrl}\" -vn -c:a aac -b:a 160k -f adts \"{fileAudio2}\"")
-                };
+                    started.Add(StartFfmpegProcess(hlsUrl, files.Video1, audioOnly: false));
+                    started.Add(StartFfmpegProcess(hlsUrl, files.Video2, audioOnly: false));
+                    started.Add(StartFfmpegProcess(hlsUrl, files.Audio1, audioOnly: true));
+                    started.Add(StartFfmpegProcess(hlsUrl, files.Audio2, audioOnly: true));
+                }
+                catch (Exception ex)
+                {
+                    abnormalTermination = true;
+                    ConsoleWriteLine($"Не удалось запустить все ffmpeg-процессы для канала '{channel}': {ex.Message}", ConsoleColor.DarkRed);
+                    foreach (var p in started)
+                    {
+                        try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+                    }
+                    return;
+                }
 
                 lock (session.ProcessesLock)
                 {
@@ -191,16 +203,16 @@ namespace TwitchDownloader2.CLI
                 }
 
                 // Проверка хешей аудио и видео (только если не был форсированный стоп — в его случае файлы наверняка обрезаны и дедуп бесполезен)
-                bool audioEqual = FilesEqualByHash(fileAudio1, fileAudio2);
-                bool videoEqual = FilesEqualByHash(fileVideo1, fileVideo2);
+                bool audioEqual = FilesEqualByHash(files.Audio1, files.Audio2);
+                bool videoEqual = FilesEqualByHash(files.Video1, files.Video2);
 
                 if (audioEqual)
                 {
-                    SafeDelete(fileAudio1);
+                    SafeDelete(files.Audio1);
                 }
                 if (videoEqual)
                 {
-                    SafeDelete(fileVideo1);
+                    SafeDelete(files.Video1);
                 }
             }
             catch (Exception ex)
@@ -294,23 +306,65 @@ namespace TwitchDownloader2.CLI
             }
         }
 
-        private Process StartFfmpegInNewWindow(string title, string ffmpegArgs)
+        private Process StartFfmpegProcess(string hlsUrl, string outputPath, bool audioOnly)
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "cmd.exe",
-                Arguments = $"/c start \"{title}\" /WAIT ffmpeg {ffmpegArgs}",
+                FileName = "ffmpeg",
                 UseShellExecute = false,
-                CreateNoWindow = false,
+                CreateNoWindow = true,
                 RedirectStandardOutput = false,
                 RedirectStandardError = false
             };
 
+            var commonArguments = new[]
+            {
+                "-hide_banner",
+                "-loglevel", "warning",
+                "-nostdin",
+                "-y",
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-reconnect_at_eof", "1",
+                "-reconnect_on_network_error", "1",
+                "-reconnect_delay_max", "10",
+                "-i", hlsUrl
+            };
+
+            foreach (var argument in commonArguments)
+                psi.ArgumentList.Add(argument);
+
+            if (audioOnly)
+            {
+                psi.ArgumentList.Add("-vn");
+                psi.ArgumentList.Add("-c:a");
+                psi.ArgumentList.Add("aac");
+                psi.ArgumentList.Add("-b:a");
+                psi.ArgumentList.Add("160k");
+                psi.ArgumentList.Add("-f");
+                psi.ArgumentList.Add("adts");
+            }
+            else
+            {
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add("copy");
+                psi.ArgumentList.Add("-f");
+                psi.ArgumentList.Add("mpegts");
+            }
+
+            psi.ArgumentList.Add(outputPath);
+
             var proc = new Process { StartInfo = psi, EnableRaisingEvents = false };
-            try { proc.Start(); }
+            try
+            {
+                if (!proc.Start())
+                    throw new InvalidOperationException("Process.Start вернул false");
+            }
             catch (Exception ex)
             {
-                ConsoleWriteLine($"Ошибка запуска ffmpeg: {ex.Message}", ConsoleColor.DarkRed);
+                proc.Dispose();
+                ConsoleWriteLine($"Ошибка запуска ffmpeg: {ex.Message}. Убедитесь, что ffmpeg доступен в PATH.", ConsoleColor.DarkRed);
+                throw;
             }
             return proc;
         }

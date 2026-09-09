@@ -1,0 +1,8 @@
+.git
+.gitignore
+Obsidian
+**/bin
+**/obj
+docker/.env
+docker/data
+docker/downloads

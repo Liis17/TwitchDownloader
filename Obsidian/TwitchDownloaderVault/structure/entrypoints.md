@@ -12,11 +12,11 @@ Parent: [[index]]
 
 ### Порядок запуска `Main(string[] args)`:
 1. Устанавливает UTF-8 для консоли (для корректного отображения эмодзи).
-2. `SettingsChecker()` — интерактивно запрашивает `TelegramToken` и `TelegramIdOwner`, если их нет в настройках.
+2. `SettingsChecker()` — использует `TELEGRAM_BOT_TOKEN`/`TELEGRAM_OWNER_ID` из env с приоритетом над файлом; при интерактивном запуске запрашивает отсутствующие значения.
 3. Создаёт и запускает `TelegramService` (см. [[modules/v2-telegram-service]]).
 4. Создаёт `TwitchDownloaderService(Settings.DownloadPath)` (см. [[modules/v2-twitch-downloader]]).
 5. Создаёт `TwitchCheckerService()` — стартует фоновый поток мониторинга (см. [[modules/v2-twitch-checker]]).
-6. `Exit()` — цикл `Console.ReadLine()`, выход по слову `STOP`. На выходе сохраняет настройки и останавливает Telegram.
+6. `Exit()` — в интерактивном режиме ждёт слово `STOP`, а в headless-режиме ждёт сигнал завершения. На выходе сохраняет настройки, останавливает Telegram и освобождает checker.
 
 ### Логирование
 Все сервисы используют собственный приватный `ConsoleWriteLine(message, color)` с префиксом `[ServiceName]` в своём цвете. Это копипаста, не общий хелпер.

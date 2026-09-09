@@ -1,5 +1,8 @@
 # 🎥 TwitchDownloader (устаревшее README.md)
 
+Для актуальной версии `TwitchDownloader2.CLI` и запуска в Docker смотри
+[docker/README.md](docker/README.md).
+
 Консольное приложение для автоматического скачивания трансляций с Twitch через Telegram-бота с поддержкой многопоточной загрузки.
 
 ## 🚀 Возможности
