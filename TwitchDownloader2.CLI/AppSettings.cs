@@ -19,7 +19,10 @@ namespace TwitchDownloader2.CLI
         public string TelegramToken { get; set; } = "";
         public long TelegramIdOwner { get; set; } = 0;
         public List<string> TrackedChannels { get; set; } = new List<string>();
+        public List<string> PausedUntilOfflineChannels { get; set; } = new List<string>();
         public string DownloadPath { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads");
+
+        [JsonIgnore] private readonly object _stateLock = new();
 
 
         // ==== Пути ====
@@ -36,17 +39,22 @@ namespace TwitchDownloader2.CLI
 
                 // Секреты, переданные через env, не дублируем в settings.data.
                 // Остальные настройки (каналы и путь) продолжают сохраняться локально.
-                var settingsToSave = new AppSettings
+                AppSettings settingsToSave;
+                lock (_stateLock)
                 {
-                    TelegramToken = IsEnvironmentVariableDefined(TelegramTokenEnvironmentVariable)
-                        ? string.Empty
-                        : TelegramToken,
-                    TelegramIdOwner = IsEnvironmentVariableDefined(TelegramOwnerIdEnvironmentVariable)
-                        ? 0
-                        : TelegramIdOwner,
-                    TrackedChannels = new List<string>(TrackedChannels ?? new List<string>()),
-                    DownloadPath = DownloadPath
-                };
+                    settingsToSave = new AppSettings
+                    {
+                        TelegramToken = IsEnvironmentVariableDefined(TelegramTokenEnvironmentVariable)
+                            ? string.Empty
+                            : TelegramToken,
+                        TelegramIdOwner = IsEnvironmentVariableDefined(TelegramOwnerIdEnvironmentVariable)
+                            ? 0
+                            : TelegramIdOwner,
+                        TrackedChannels = new List<string>(TrackedChannels ?? new List<string>()),
+                        PausedUntilOfflineChannels = new List<string>(PausedUntilOfflineChannels ?? new List<string>()),
+                        DownloadPath = DownloadPath
+                    };
+                }
 
                 string json = JsonSerializer.Serialize(settingsToSave, new JsonSerializerOptions { WriteIndented = true });
                 string base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
@@ -83,7 +91,88 @@ namespace TwitchDownloader2.CLI
             }
 
             settings.ApplyEnvironmentOverrides();
+            settings.NormalizeCollections();
             return settings;
+        }
+
+        public IReadOnlyList<string> GetTrackedChannelsSnapshot()
+        {
+            lock (_stateLock)
+            {
+                return (TrackedChannels ??= new List<string>())
+                    .Where(channel => !string.IsNullOrWhiteSpace(channel))
+                    .Select(channel => channel.Trim().ToLowerInvariant())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+        }
+
+        public bool AddTrackedChannel(string channel)
+        {
+            var normalized = NormalizeChannel(channel);
+            if (normalized.Length == 0)
+                return false;
+
+            lock (_stateLock)
+            {
+                TrackedChannels ??= new List<string>();
+                if (TrackedChannels.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                    return false;
+                TrackedChannels.Add(normalized);
+                return true;
+            }
+        }
+
+        public bool RemoveTrackedChannel(string channel)
+        {
+            var normalized = NormalizeChannel(channel);
+            lock (_stateLock)
+            {
+                TrackedChannels ??= new List<string>();
+                PausedUntilOfflineChannels ??= new List<string>();
+                var removed = TrackedChannels.RemoveAll(
+                    item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase)) > 0;
+                PausedUntilOfflineChannels.RemoveAll(
+                    item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase));
+                return removed;
+            }
+        }
+
+        public bool IsPausedUntilOffline(string channel)
+        {
+            var normalized = NormalizeChannel(channel);
+            lock (_stateLock)
+            {
+                PausedUntilOfflineChannels ??= new List<string>();
+                return PausedUntilOfflineChannels.Contains(normalized, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        public bool AddPausedChannel(string channel)
+        {
+            var normalized = NormalizeChannel(channel);
+            if (normalized.Length == 0)
+                return false;
+
+            lock (_stateLock)
+            {
+                PausedUntilOfflineChannels ??= new List<string>();
+                if (PausedUntilOfflineChannels.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                    return false;
+                PausedUntilOfflineChannels.Add(normalized);
+                return true;
+            }
+        }
+
+        public bool RemovePausedChannel(string channel)
+        {
+            var normalized = NormalizeChannel(channel);
+            lock (_stateLock)
+            {
+                PausedUntilOfflineChannels ??= new List<string>();
+                return PausedUntilOfflineChannels.RemoveAll(
+                    item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase)) > 0;
+            }
         }
 
         private void ApplyEnvironmentOverrides()
@@ -112,6 +201,28 @@ namespace TwitchDownloader2.CLI
             var downloadPathFromEnvironment = Environment.GetEnvironmentVariable(DownloadPathEnvironmentVariable);
             if (!string.IsNullOrWhiteSpace(downloadPathFromEnvironment))
                 DownloadPath = downloadPathFromEnvironment.Trim();
+        }
+
+        private void NormalizeCollections()
+        {
+            lock (_stateLock)
+            {
+                TrackedChannels = (TrackedChannels ?? new List<string>())
+                    .Where(channel => !string.IsNullOrWhiteSpace(channel))
+                    .Select(channel => channel.Trim().ToLowerInvariant())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                PausedUntilOfflineChannels = (PausedUntilOfflineChannels ?? new List<string>())
+                    .Where(channel => !string.IsNullOrWhiteSpace(channel))
+                    .Select(channel => channel.Trim().ToLowerInvariant())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+        }
+
+        private static string NormalizeChannel(string channel)
+        {
+            return channel?.Trim().ToLowerInvariant() ?? string.Empty;
         }
 
         private static bool IsEnvironmentVariableDefined(string name)

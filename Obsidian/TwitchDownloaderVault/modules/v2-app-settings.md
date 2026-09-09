@@ -14,6 +14,7 @@ Parent: [[Index]]
 | `TelegramToken` | `string` | `""` | Токен Telegram-бота |
 | `TelegramIdOwner` | `long` | `0` | ID администратора (единственный разрешённый user) |
 | `TrackedChannels` | `List<string>` | `[]` | Имена отслеживаемых Twitch-каналов (lowercase, без url-префикса) |
+| `PausedUntilOfflineChannels` | `List<string>` | `[]` | Каналы, которым после ручной остановки запрещён повторный старт до подтверждённого offline |
 | `DownloadPath` | `string` | `{BaseDirectory}/Downloads` | Папка сохранения файлов |
 
 ## Переменные окружения
@@ -28,6 +29,10 @@ Parent: [[Index]]
 |-------|---------|
 | `Save()` | Создаёт копию настроек (с очищенными env-секретами), сериализует её → JSON → Base64 → пишет в `Data/settings.data`. Создаёт `Data/` если нет |
 | `static Load()` | Читает файл, декодирует Base64, десериализует JSON. При ошибке/отсутствии — возвращает `new AppSettings()` |
+| `GetTrackedChannelsSnapshot()` | Возвращает нормализованный case-insensitive снимок без дублей для checker/Telegram |
+| `AddTrackedChannel(channel)` / `RemoveTrackedChannel(channel)` | Потокобезопасно меняют tracked-список; удаление также удаляет pause |
+| `IsPausedUntilOffline(channel)` | Проверяет persisted-запрет повторного старта |
+| `AddPausedChannel(channel)` / `RemovePausedChannel(channel)` | Потокобезопасно управляют pause-until-offline |
 | `ConsoleWriteLine(...)` | Приватный логгер с префиксом `[AppSettings]` |
 
 ## Пути (приватные статические)
@@ -47,3 +52,4 @@ Parent: [[Index]]
   - В `Program.SettingsChecker()` после интерактивного ввода.
   - В `TelegramService` после изменений через бота (добавление/удаление канала, смена пути).
 - Канал в `TrackedChannels` нормализуется при добавлении: `lowercase` + `ExtractChannelName()` (см. [[modules/v2-telegram-service]]).
+- Обе коллекции нормализуются после загрузки; pause сохраняется в том же Base64 JSON и переживает рестарт.

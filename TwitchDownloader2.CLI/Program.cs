@@ -6,10 +6,11 @@
         private static DateTime _startTime = DateTime.Now;
         private static ConsoleColor _consoleColor = ConsoleColor.DarkGreen;
         private static readonly ManualResetEventSlim ShutdownEvent = new(false);
-        public static TelegramService TelegramServiceInstance { get; private set; }
+        private static readonly HttpClient PlaybackHttpClient = new();
+        public static TelegramService TelegramServiceInstance { get; private set; } = null!;
         public static AppSettings Settings { get; private set; } = AppSettings.Load();
-        public static TwitchCheckerService TwitchChecker { get; private set; }
-        public static TwitchDownloaderService TwitchDownloader { get; private set; }
+        public static TwitchCheckerService TwitchChecker { get; private set; } = null!;
+        public static TwitchDownloaderService TwitchDownloader { get; private set; } = null!;
         public static void Main(string[] args)
         {
             // Ensure UTF-8 encoding so emojis render correctly in Windows Terminal
@@ -24,13 +25,18 @@
             ConsoleWriteLine("Запуск Telegram-сервиса...");
 
             TelegramServiceInstance = new TelegramService(Settings.TelegramToken, Settings.TelegramIdOwner);
-            TelegramServiceInstance.Start();
 
             ConsoleWriteLine("Запуск TwitchDownloader-сервиса...");
-            TwitchDownloader = new TwitchDownloaderService(Settings.DownloadPath);
+            TwitchDownloader = new TwitchDownloaderService(
+                Settings,
+                new TwitchPlaybackClient(PlaybackHttpClient),
+                TelegramServiceInstance);
 
             ConsoleWriteLine("Запуск TwitchChecker-сервиса...");
-            TwitchChecker = new TwitchCheckerService();
+            TwitchChecker = new TwitchCheckerService(Settings, TwitchDownloader);
+            TwitchChecker.Start();
+
+            TelegramServiceInstance.Start();
 
             Exit();
         }

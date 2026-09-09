@@ -1,394 +1,528 @@
-﻿using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
-
 namespace TwitchDownloader2.CLI
 {
-    public class TwitchDownloaderService
+    public enum StartDownloadResult
     {
-        private static readonly string _serviceName = "TwitchDownloader";
-        private static readonly ConsoleColor _consoleColor = ConsoleColor.DarkCyan;
+        Started,
+        AlreadyActive,
+        Offline,
+        Suppressed,
+        Failed
+    }
 
-        private readonly string _downloadRoot;
-        private readonly Random _rng = new();
-        private readonly ConcurrentDictionary<string, DownloadSession> _activeSessions
-            = new(StringComparer.OrdinalIgnoreCase);
+    public enum StopDownloadResult
+    {
+        Accepted,
+        AlreadyStopping,
+        NotFound
+    }
 
-        private sealed record DownloadFiles(string Video1, string Video2, string Audio1, string Audio2);
+    public enum ActiveDownloadState
+    {
+        Recording,
+        Finalizing
+    }
 
-        private sealed class DownloadSession
+    public sealed record ActiveDownloadInfo(
+        string SessionId,
+        string Channel,
+        DateTimeOffset StartedAt,
+        string Path,
+        ActiveDownloadState State);
+
+    public sealed record RecordingStartedInfo(
+        ActiveDownloadInfo Download,
+        string SelectedQuality,
+        bool IsSource);
+
+    public sealed record RecordingCompletionInfo(
+        string SessionId,
+        string Channel,
+        bool Succeeded,
+        string RawPath,
+        string? OutputPath,
+        double DurationSeconds,
+        long SizeBytes,
+        int AdvertisementCount,
+        double AdvertisementDurationSeconds,
+        int GapCount,
+        string? ErrorMessage);
+
+    public interface IRecordingNotificationSink
+    {
+        Task RecordingStartedAsync(RecordingStartedInfo info, CancellationToken cancellationToken);
+        Task RecordingCompletedAsync(RecordingCompletionInfo info, CancellationToken cancellationToken);
+    }
+
+    public interface ITwitchDownloaderService
+    {
+        Task<StartDownloadResult> TryStartDownloadAsync(string channel, CancellationToken cancellationToken);
+        Task<StopDownloadResult> RequestStopAsync(string sessionId, CancellationToken cancellationToken);
+        IReadOnlyList<ActiveDownloadInfo> GetActiveDownloads();
+        Task StopForShutdownAsync(CancellationToken cancellationToken);
+    }
+
+    public sealed class TwitchDownloaderService : ITwitchDownloaderService
+    {
+        private static readonly string ServiceName = "TwitchDownloader";
+        private static readonly ConsoleColor ConsoleColor = System.ConsoleColor.DarkCyan;
+
+        private readonly object _gate = new();
+        private readonly AppSettings _settings;
+        private readonly ITwitchPlaybackClient _playbackClient;
+        private readonly LiveStreamRecorder _recorder;
+        private readonly MediaFinalizer _finalizer;
+        private readonly IRecordingNotificationSink _notifications;
+        private readonly Action _saveSettings;
+        private readonly Dictionary<string, DownloadSession> _sessionsById = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, DownloadSession> _sessionsByChannel = new(StringComparer.OrdinalIgnoreCase);
+        private bool _shutdownRequested;
+
+        private sealed class DownloadSession : IDisposable
         {
-            public string Channel = string.Empty;
-            public string SessionCode = string.Empty;
-            public readonly List<Process> Processes = new();
-            public readonly object ProcessesLock = new();
-            public volatile bool ForcedByUser;
-        }
+            public required string SessionId { get; init; }
+            public required string Channel { get; init; }
+            public required DateTimeOffset StartedAt { get; init; }
+            public required string RawPath { get; init; }
+            public required TwitchPlaybackResult Playback { get; init; }
+            public CancellationTokenSource RecordingCancellation { get; } = new();
+            public CancellationTokenSource FinalizationCancellation { get; } = new();
+            public ActiveDownloadState State { get; set; } = ActiveDownloadState.Recording;
+            public bool StopRequested { get; set; }
+            public bool SkipFinalization { get; set; }
+            public Task WorkerTask { get; set; } = Task.CompletedTask;
 
-        public TwitchDownloaderService(string downloadPath)
-        {
-            _downloadRoot = string.IsNullOrWhiteSpace(downloadPath)
-                ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads")
-                : downloadPath;
-
-            try { Directory.CreateDirectory(_downloadRoot); }
-            catch (Exception ex)
+            public void Dispose()
             {
-                ConsoleWriteLine($"Не удалось создать папку загрузок: {_downloadRoot}. Ошибка: {ex.Message}", ConsoleColor.DarkRed);
+                RecordingCancellation.Dispose();
+                FinalizationCancellation.Dispose();
             }
         }
 
-        public async Task StartDownload(string channelName)
+        public TwitchDownloaderService(
+            AppSettings settings,
+            ITwitchPlaybackClient playbackClient,
+            IRecordingNotificationSink notifications)
+            : this(
+                settings,
+                playbackClient,
+                new ProcessMediaToolRunner(),
+                notifications,
+                settings.Save,
+                new SystemAsyncDelay())
         {
-            if (string.IsNullOrWhiteSpace(channelName))
-            {
-                ConsoleWriteLine("Имя канала не задано", ConsoleColor.DarkYellow);
-                return;
-            }
-
-            var channel = channelName.Trim();
-            var sessionCode = GenerateCode(6);
-            ConsoleWriteLine($"Старт загрузки канала '{channel}' (сессия {sessionCode})");
-
-            var message = $"" +
-            $"✨ У <b>{channel}</b> началась транслиция!\n" +
-            $"\n" +
-            $"⬇️  Скачивание запущено!\n" +
-            $"\n" +
-            $"🔔 По завершению стрима придет уведомление";
-            await Program.TelegramServiceInstance.SendNotification(message);
-            Thread.Sleep(1000);
-
-            var files = new DownloadFiles(
-                Path.Combine(_downloadRoot, $"{channel}_video_1_{sessionCode}.ts"),
-                Path.Combine(_downloadRoot, $"{channel}_video_2_{sessionCode}.ts"),
-                Path.Combine(_downloadRoot, $"{channel}_audio_1_{sessionCode}.aac"),
-                Path.Combine(_downloadRoot, $"{channel}_audio_2_{sessionCode}.aac"));
-
-            var message2 = $"" +
-                $"📂 <b>Файлы этой транцляции:</b>\n" +
-                $"<pre>🎞️ {files.Video1}\n" +
-                $"🎞️ {files.Video2}\n" +
-                $"🎵 {files.Audio1}\n" +
-                $"🎵 {files.Audio2}</pre>";
-
-            await Program.TelegramServiceInstance.SendNotification(message2);
-
-            var hlsUrl = ResolveHlsUrl(channel);
-            if (string.IsNullOrWhiteSpace(hlsUrl))
-            {
-                ConsoleWriteLine("Не удалось получить HLS URL через yt-dlp", ConsoleColor.DarkRed);
-                Program.TwitchChecker?.MarkDownloadFinished(channel);
-                return;
-            }
-
-            var session = new DownloadSession { Channel = channel, SessionCode = sessionCode };
-            _activeSessions[channel] = session;
-
-            var worker = new Thread(() => RunDownloadSession(session, hlsUrl, files))
-            {
-                IsBackground = true,
-                Name = $"DL-{channel}-{sessionCode}"
-            };
-            worker.Start();
         }
 
-        /// <summary>
-        /// Возвращает имена каналов с активными в данный момент сессиями загрузки.
-        /// </summary>
-        public IReadOnlyList<string> GetActiveDownloads()
+        internal TwitchDownloaderService(
+            AppSettings settings,
+            ITwitchPlaybackClient playbackClient,
+            IMediaToolRunner mediaToolRunner,
+            IRecordingNotificationSink notifications,
+            Action saveSettings,
+            IAsyncDelay delay)
         {
-            return _activeSessions.Keys.ToList();
+            _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+            _playbackClient = playbackClient ?? throw new ArgumentNullException(nameof(playbackClient));
+            _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
+            _saveSettings = saveSettings ?? throw new ArgumentNullException(nameof(saveSettings));
+            _recorder = new LiveStreamRecorder(_playbackClient, delay, message => ConsoleWriteLine(message));
+            _finalizer = new MediaFinalizer(mediaToolRunner, message => ConsoleWriteLine(message));
         }
 
-        /// <summary>
-        /// Принудительно завершает все ffmpeg-процессы сессии указанного канала.
-        /// Возвращает false если активной сессии нет.
-        /// </summary>
-        public bool StopDownload(string channel)
+        public async Task<StartDownloadResult> TryStartDownloadAsync(
+            string channel,
+            CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(channel)) return false;
-            if (!_activeSessions.TryGetValue(channel, out var session)) return false;
-
-            session.ForcedByUser = true;
-            List<Process> snapshot;
-            lock (session.ProcessesLock)
-            {
-                snapshot = session.Processes.ToList();
-            }
-            foreach (var p in snapshot)
-            {
-                try { if (p != null && !p.HasExited) p.Kill(entireProcessTree: true); } catch { }
-            }
-            return true;
-        }
-
-        private void RunDownloadSession(DownloadSession session, string hlsUrl, DownloadFiles files)
-        {
-            var channel = session.Channel;
-            var sessionCode = session.SessionCode;
-            bool abnormalTermination = false;
-
+            string normalizedChannel;
             try
             {
-                // Если пользователь успел нажать "Завершить загрузку" до старта потока — не запускаем ffmpeg
-                if (session.ForcedByUser)
-                {
-                    ConsoleWriteLine($"Сессия канала '{channel}' отменена пользователем до запуска ffmpeg");
-                    return;
-                }
+                normalizedChannel = NormalizeChannel(channel);
+            }
+            catch (ArgumentException ex)
+            {
+                ConsoleWriteLine(ex.Message, System.ConsoleColor.DarkYellow);
+                return StartDownloadResult.Failed;
+            }
 
-                var started = new List<Process>();
-                try
-                {
-                    started.Add(StartFfmpegProcess(hlsUrl, files.Video1, audioOnly: false));
-                    started.Add(StartFfmpegProcess(hlsUrl, files.Video2, audioOnly: false));
-                    started.Add(StartFfmpegProcess(hlsUrl, files.Audio1, audioOnly: true));
-                    started.Add(StartFfmpegProcess(hlsUrl, files.Audio2, audioOnly: true));
-                }
-                catch (Exception ex)
-                {
-                    abnormalTermination = true;
-                    ConsoleWriteLine($"Не удалось запустить все ffmpeg-процессы для канала '{channel}': {ex.Message}", ConsoleColor.DarkRed);
-                    foreach (var p in started)
-                    {
-                        try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
-                    }
-                    return;
-                }
+            lock (_gate)
+            {
+                if (_shutdownRequested)
+                    return StartDownloadResult.Failed;
+                if (_sessionsByChannel.ContainsKey(normalizedChannel))
+                    return StartDownloadResult.AlreadyActive;
+            }
 
-                lock (session.ProcessesLock)
-                {
-                    session.Processes.AddRange(started);
-                }
-
-                // Если пользователь нажал Stop пока стартовали — убить только что запущенные
-                if (session.ForcedByUser)
-                {
-                    foreach (var p in started)
-                    {
-                        try { if (p != null && !p.HasExited) p.Kill(entireProcessTree: true); } catch { }
-                    }
-                }
-
-                var waits = started.Where(p => p != null)
-                    .Select(p => Task.Run(() => { try { p.WaitForExit(); } catch { } }))
-                    .ToArray();
-
-                if (waits.Length > 0)
-                {
-                    // 1. Ждём первого завершения
-                    try { Task.WaitAny(waits); } catch { }
-
-                    // 2. Даём остальным 10 секунд на самозакрытие
-                    bool allFinished;
-                    try { allFinished = Task.WaitAll(waits, TimeSpan.FromSeconds(10)); }
-                    catch { allFinished = false; }
-
-                    if (!allFinished)
-                    {
-                        // Если это пользовательский Stop — мы и так убили процессы, abnormal не выставляем
-                        if (!session.ForcedByUser)
-                        {
-                            abnormalTermination = true;
-                            ConsoleWriteLine($"Не все ffmpeg-процессы '{channel}' закрылись за 10с после первого. Принудительное завершение.", ConsoleColor.DarkYellow);
-                        }
-                        foreach (var p in started)
-                        {
-                            try { if (p != null && !p.HasExited) p.Kill(entireProcessTree: true); } catch { }
-                        }
-                        try { Task.WaitAll(waits, TimeSpan.FromSeconds(5)); } catch { }
-                    }
-                }
-
-                // Проверка хешей аудио и видео (только если не был форсированный стоп — в его случае файлы наверняка обрезаны и дедуп бесполезен)
-                bool audioEqual = FilesEqualByHash(files.Audio1, files.Audio2);
-                bool videoEqual = FilesEqualByHash(files.Video1, files.Video2);
-
-                if (audioEqual)
-                {
-                    SafeDelete(files.Audio1);
-                }
-                if (videoEqual)
-                {
-                    SafeDelete(files.Video1);
-                }
+            TwitchPlaybackResult playback;
+            try
+            {
+                playback = await _playbackClient.ResolveLiveAsync(normalizedChannel, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                ConsoleWriteLine($"Ошибка сессии загрузки канала '{channel}': {ex.Message}", ConsoleColor.DarkRed);
+                ConsoleWriteLine(
+                    $"Не удалось проверить канал '{normalizedChannel}': {ex.Message}",
+                    System.ConsoleColor.DarkYellow);
+                return StartDownloadResult.Failed;
+            }
+
+            if (playback.Status == TwitchPlaybackStatus.Offline)
+            {
+                if (_settings.RemovePausedChannel(normalizedChannel))
+                    SaveSettingsSafely();
+                return StartDownloadResult.Offline;
+            }
+
+            if (playback.MediaPlaylistUrl is null)
+            {
+                ConsoleWriteLine($"Twitch не вернул media playlist для '{normalizedChannel}'.", System.ConsoleColor.DarkYellow);
+                return StartDownloadResult.Failed;
+            }
+
+            if (_settings.IsPausedUntilOffline(normalizedChannel))
+                return StartDownloadResult.Suppressed;
+
+            if (!playback.IsSource)
+            {
+                ConsoleWriteLine(
+                    $"Source недоступен для '{normalizedChannel}', используется '{playback.SelectedQuality}'.",
+                    System.ConsoleColor.DarkYellow);
+            }
+
+            string downloadRoot;
+            try
+            {
+                downloadRoot = string.IsNullOrWhiteSpace(_settings.DownloadPath)
+                    ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads")
+                    : _settings.DownloadPath;
+                Directory.CreateDirectory(downloadRoot);
+            }
+            catch (Exception ex)
+            {
+                ConsoleWriteLine($"Не удалось создать папку загрузок: {ex.Message}", System.ConsoleColor.DarkRed);
+                return StartDownloadResult.Failed;
+            }
+
+            var sessionId = Guid.NewGuid().ToString("N");
+            var startedAt = DateTimeOffset.UtcNow;
+            var rawPath = Path.Combine(
+                downloadRoot,
+                $"live_{normalizedChannel}_{startedAt:yyyyMMdd-HHmmss}_source_{sessionId}.recording");
+            var session = new DownloadSession
+            {
+                SessionId = sessionId,
+                Channel = normalizedChannel,
+                StartedAt = startedAt,
+                RawPath = rawPath,
+                Playback = playback
+            };
+
+            lock (_gate)
+            {
+                if (_shutdownRequested)
+                {
+                    session.Dispose();
+                    return StartDownloadResult.Failed;
+                }
+
+                if (_sessionsByChannel.ContainsKey(normalizedChannel))
+                {
+                    session.Dispose();
+                    return StartDownloadResult.AlreadyActive;
+                }
+
+                if (_settings.IsPausedUntilOffline(normalizedChannel))
+                {
+                    session.Dispose();
+                    return StartDownloadResult.Suppressed;
+                }
+
+                _sessionsById.Add(sessionId, session);
+                _sessionsByChannel.Add(normalizedChannel, session);
+                session.WorkerTask = RunSessionAsync(session);
+            }
+
+            ConsoleWriteLine($"Запись '{normalizedChannel}' запущена (сессия {sessionId}).");
+            return StartDownloadResult.Started;
+        }
+
+        public Task<StopDownloadResult> RequestStopAsync(
+            string sessionId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(sessionId))
+                return Task.FromResult(StopDownloadResult.NotFound);
+
+            DownloadSession session;
+            lock (_gate)
+            {
+                if (!_sessionsById.TryGetValue(sessionId, out session!))
+                    return Task.FromResult(StopDownloadResult.NotFound);
+
+                if (session.StopRequested || session.State == ActiveDownloadState.Finalizing)
+                    return Task.FromResult(StopDownloadResult.AlreadyStopping);
+
+                session.StopRequested = true;
+            }
+
+            if (_settings.AddPausedChannel(session.Channel))
+                SaveSettingsSafely();
+
+            CancelSafely(session.RecordingCancellation);
+            ConsoleWriteLine($"Остановка сессии {session.SessionId} для '{session.Channel}' принята.");
+            return Task.FromResult(StopDownloadResult.Accepted);
+        }
+
+        public IReadOnlyList<ActiveDownloadInfo> GetActiveDownloads()
+        {
+            lock (_gate)
+            {
+                return _sessionsById.Values
+                    .Select(ToInfo)
+                    .OrderBy(info => info.StartedAt)
+                    .ToArray();
+            }
+        }
+
+        public async Task StopForShutdownAsync(CancellationToken cancellationToken)
+        {
+            DownloadSession[] sessions;
+            lock (_gate)
+            {
+                _shutdownRequested = true;
+                sessions = _sessionsById.Values.ToArray();
+                foreach (var session in sessions)
+                    session.SkipFinalization = true;
+            }
+
+            foreach (var session in sessions)
+            {
+                CancelSafely(session.RecordingCancellation);
+                CancelSafely(session.FinalizationCancellation);
+            }
+
+            if (sessions.Length == 0)
+                return;
+
+            await Task.WhenAll(sessions.Select(session => session.WorkerTask)).WaitAsync(cancellationToken);
+        }
+
+        internal Task<IReadOnlyList<MediaFinalizeResult>> RecoverInterruptedDownloadsAsync(
+            CancellationToken cancellationToken)
+        {
+            var downloadRoot = string.IsNullOrWhiteSpace(_settings.DownloadPath)
+                ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads")
+                : _settings.DownloadPath;
+            return _finalizer.RecoverOrphansAsync(downloadRoot, cancellationToken);
+        }
+
+        private async Task RunSessionAsync(DownloadSession session)
+        {
+            await Task.Yield();
+            LiveRecordingResult? recording = null;
+            try
+            {
+                var startedNotification = NotifyStartedSafelyAsync(session);
+                recording = await _recorder.RecordAsync(
+                    session.Channel,
+                    session.Playback.MediaPlaylistUrl!,
+                    session.RawPath,
+                    session.RecordingCancellation.Token);
+                await startedNotification;
+
+                lock (_gate)
+                {
+                    if (session.SkipFinalization)
+                        return;
+                    session.State = ActiveDownloadState.Finalizing;
+                }
+
+                if (!recording.HasContent)
+                {
+                    await NotifyCompletedSafelyAsync(new RecordingCompletionInfo(
+                        session.SessionId,
+                        session.Channel,
+                        false,
+                        recording.RawPath,
+                        null,
+                        0,
+                        0,
+                        recording.AdvertisementCount,
+                        recording.AdvertisementDurationSeconds,
+                        recording.GapCount,
+                        recording.ErrorMessage ?? "Запись не содержит ни одного медиа-сегмента."),
+                        session.FinalizationCancellation.Token);
+                    return;
+                }
+
+                var finalized = await _finalizer.FinalizeAsync(
+                    recording.RawPath,
+                    recording.ContentDurationSeconds,
+                    recording.Container,
+                    session.FinalizationCancellation.Token);
+                var outputPath = finalized.Status == MediaFinalizeStatus.NoContent
+                    ? null
+                    : finalized.OutputPath;
+                var size = outputPath is not null && File.Exists(outputPath)
+                    ? new FileInfo(outputPath).Length
+                    : 0;
+                var duration = finalized.VideoDurationSeconds > 0
+                    ? finalized.VideoDurationSeconds
+                    : finalized.ExpectedDurationSeconds;
+
+                await NotifyCompletedSafelyAsync(new RecordingCompletionInfo(
+                    session.SessionId,
+                    session.Channel,
+                    finalized.Status == MediaFinalizeStatus.Succeeded,
+                    finalized.RawPath,
+                    outputPath,
+                    duration,
+                    size,
+                    recording.AdvertisementCount,
+                    recording.AdvertisementDurationSeconds,
+                    recording.GapCount,
+                    finalized.ErrorMessage ?? recording.ErrorMessage),
+                    session.FinalizationCancellation.Token);
+            }
+            catch (OperationCanceledException) when (IsShutdown(session))
+            {
+                ConsoleWriteLine($"Сессия {session.SessionId} остановлена для быстрого завершения процесса.");
+            }
+            catch (Exception ex)
+            {
+                ConsoleWriteLine(
+                    $"Ошибка сессии {session.SessionId} канала '{session.Channel}': {ex.Message}",
+                    System.ConsoleColor.DarkRed);
+
+                if (!IsShutdown(session))
+                {
+                    await NotifyCompletedSafelyAsync(new RecordingCompletionInfo(
+                        session.SessionId,
+                        session.Channel,
+                        false,
+                        recording?.RawPath ?? session.RawPath,
+                        null,
+                        recording?.ContentDurationSeconds ?? 0,
+                        0,
+                        recording?.AdvertisementCount ?? 0,
+                        recording?.AdvertisementDurationSeconds ?? 0,
+                        recording?.GapCount ?? 0,
+                        ex.Message),
+                        CancellationToken.None);
+                }
             }
             finally
             {
-                _activeSessions.TryRemove(channel, out _);
-                try { Program.TwitchChecker?.MarkDownloadFinished(channel); } catch { }
-                ConsoleWriteLine($"Загрузка канала '{channel}' завершена (сессия {sessionCode})");
-
-                try
+                lock (_gate)
                 {
-                    if (session.ForcedByUser)
+                    _sessionsById.Remove(session.SessionId);
+                    if (_sessionsByChannel.TryGetValue(session.Channel, out var current)
+                        && ReferenceEquals(current, session))
                     {
-                        _ = Program.TelegramServiceInstance.SendNotification($"⛔ Загрузка стрима <b>{channel}</b> принудительно приостановлена");
-                    }
-                    else if (abnormalTermination)
-                    {
-                        _ = Program.TelegramServiceInstance.SendNotification($"⚠️ При завершении загрузки <b>{channel}</b> один из ffmpeg-процессов был принудительно закрыт. Канал будет проверен заново.");
-                        try { Program.TwitchChecker?.ForceCheck(); } catch { }
-                    }
-                    else
-                    {
-                        _ = Program.TelegramServiceInstance.SendNotification($"Загрузка стрима {channel} Завершена");
+                        _sessionsByChannel.Remove(session.Channel);
                     }
                 }
-                catch { }
 
-                lock (session.ProcessesLock)
-                {
-                    foreach (var p in session.Processes) { try { p?.Dispose(); } catch { } }
-                }
+                session.Dispose();
+                ConsoleWriteLine($"Сессия {session.SessionId} канала '{session.Channel}' завершена.");
             }
         }
 
-        private static bool FilesEqualByHash(string path1, string path2)
+        private async Task NotifyStartedSafelyAsync(DownloadSession session)
         {
-            if (!File.Exists(path1) || !File.Exists(path2)) return false;
-            using var sha = SHA256.Create();
-            using var f1 = new FileStream(path1, FileMode.Open, FileAccess.Read, FileShare.Read);
-            using var f2 = new FileStream(path2, FileMode.Open, FileAccess.Read, FileShare.Read);
-            var h1 = sha.ComputeHash(f1);
-            var h2 = sha.ComputeHash(f2);
-            return h1.AsSpan().SequenceEqual(h2);
-        }
-
-        private static void SafeDelete(string path)
-        {
-            try { if (File.Exists(path)) File.Delete(path); } catch { }
-        }
-
-        private string ResolveHlsUrl(string channel)
-        {
-            // yt-dlp --no-warnings --get-url https://www.twitch.tv/<channel>
-            using var proc = new Process();
-            proc.StartInfo = new ProcessStartInfo
-            {
-                FileName = "yt-dlp",
-                Arguments = $"--no-warnings --get-url https://www.twitch.tv/{channel}",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-
             try
             {
-                if (!proc.Start()) return string.Empty;
-                string stdout = proc.StandardOutput.ReadToEnd();
-                string stderr = proc.StandardError.ReadToEnd();
-                proc.WaitForExit();
-
-                if (proc.ExitCode != 0)
-                {
-                    ConsoleWriteLine($"yt-dlp вернул код {proc.ExitCode}. {stderr}", ConsoleColor.DarkYellow);
-                    return string.Empty;
-                }
-
-                // Первая строка с m3u8
-                var line = stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                return line ?? string.Empty;
+                await _notifications.RecordingStartedAsync(
+                    new RecordingStartedInfo(ToInfo(session), session.Playback.SelectedQuality, session.Playback.IsSource),
+                    session.RecordingCancellation.Token);
+            }
+            catch (OperationCanceledException) when (session.RecordingCancellation.IsCancellationRequested)
+            {
+                // A stop request must not be delayed by a Telegram notification.
             }
             catch (Exception ex)
             {
-                ConsoleWriteLine($"Ошибка запуска yt-dlp: {ex.Message}", ConsoleColor.DarkRed);
-                return string.Empty;
+                ConsoleWriteLine($"Не удалось отправить уведомление о старте: {ex.Message}", System.ConsoleColor.DarkYellow);
             }
         }
 
-        private Process StartFfmpegProcess(string hlsUrl, string outputPath, bool audioOnly)
+        private async Task NotifyCompletedSafelyAsync(
+            RecordingCompletionInfo info,
+            CancellationToken cancellationToken)
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "ffmpeg",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = false,
-                RedirectStandardError = false
-            };
-
-            var commonArguments = new[]
-            {
-                "-hide_banner",
-                "-loglevel", "warning",
-                "-nostdin",
-                "-y",
-                "-reconnect", "1",
-                "-reconnect_streamed", "1",
-                "-reconnect_at_eof", "1",
-                "-reconnect_on_network_error", "1",
-                "-reconnect_delay_max", "10",
-                "-i", hlsUrl
-            };
-
-            foreach (var argument in commonArguments)
-                psi.ArgumentList.Add(argument);
-
-            if (audioOnly)
-            {
-                psi.ArgumentList.Add("-vn");
-                psi.ArgumentList.Add("-c:a");
-                psi.ArgumentList.Add("aac");
-                psi.ArgumentList.Add("-b:a");
-                psi.ArgumentList.Add("160k");
-                psi.ArgumentList.Add("-f");
-                psi.ArgumentList.Add("adts");
-            }
-            else
-            {
-                psi.ArgumentList.Add("-c");
-                psi.ArgumentList.Add("copy");
-                psi.ArgumentList.Add("-f");
-                psi.ArgumentList.Add("mpegts");
-            }
-
-            psi.ArgumentList.Add(outputPath);
-
-            var proc = new Process { StartInfo = psi, EnableRaisingEvents = false };
             try
             {
-                if (!proc.Start())
-                    throw new InvalidOperationException("Process.Start вернул false");
+                await _notifications.RecordingCompletedAsync(info, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Docker shutdown cancels notification I/O as well as media tools.
             }
             catch (Exception ex)
             {
-                proc.Dispose();
-                ConsoleWriteLine($"Ошибка запуска ffmpeg: {ex.Message}. Убедитесь, что ffmpeg доступен в PATH.", ConsoleColor.DarkRed);
-                throw;
+                ConsoleWriteLine($"Не удалось отправить уведомление о завершении: {ex.Message}", System.ConsoleColor.DarkYellow);
             }
-            return proc;
         }
 
-        private string GenerateCode(int len)
+        private bool IsShutdown(DownloadSession session)
         {
-            const string alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-            Span<char> buf = stackalloc char[len];
-            for (int i = 0; i < len; i++) buf[i] = alphabet[_rng.Next(alphabet.Length)];
-            return new string(buf);
+            lock (_gate)
+                return session.SkipFinalization || _shutdownRequested;
         }
 
-        private static void ConsoleWriteLine(string message, ConsoleColor color = ConsoleColor.Gray)
+        private void SaveSettingsSafely()
         {
-            var previousColor = Console.ForegroundColor;
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("[");
-            Console.ForegroundColor = _consoleColor;
-            Console.Write(_serviceName);
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("] ");
-            Console.ForegroundColor = color;
-            Console.WriteLine(message);
-            Console.ForegroundColor = previousColor;
+            try
+            {
+                _saveSettings();
+            }
+            catch (Exception ex)
+            {
+                ConsoleWriteLine($"Не удалось сохранить паузу канала: {ex.Message}", System.ConsoleColor.DarkRed);
+            }
+        }
+
+        private static ActiveDownloadInfo ToInfo(DownloadSession session)
+        {
+            return new ActiveDownloadInfo(
+                session.SessionId,
+                session.Channel,
+                session.StartedAt,
+                session.RawPath,
+                session.State);
+        }
+
+        private static void CancelSafely(CancellationTokenSource cancellation)
+        {
+            try { cancellation.Cancel(); } catch (ObjectDisposedException) { }
+        }
+
+        private static string NormalizeChannel(string channel)
+        {
+            var normalized = channel?.Trim().ToLowerInvariant() ?? string.Empty;
+            if (normalized.Length is < 3 or > 25
+                || normalized.Any(character => !(character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_')))
+            {
+                throw new ArgumentException("Имя Twitch-канала должно содержать 3–25 латинских букв, цифр или подчёркиваний.");
+            }
+            return normalized;
+        }
+
+        private static void ConsoleWriteLine(string message, System.ConsoleColor color = System.ConsoleColor.Gray)
+        {
+            var previousColor = System.Console.ForegroundColor;
+            System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
+            System.Console.Write("[");
+            System.Console.ForegroundColor = ConsoleColor;
+            System.Console.Write(ServiceName);
+            System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
+            System.Console.Write("] ");
+            System.Console.ForegroundColor = color;
+            System.Console.WriteLine(message);
+            System.Console.ForegroundColor = previousColor;
         }
     }
 }

@@ -18,7 +18,8 @@ namespace TwitchDownloader2.CLI
             {
                 new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
                 new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
-                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
+                new KeyboardButton[] { "⛔ Остановить запись", "⚙ Настройки" },
+                new KeyboardButton[] { "🏠 Главная" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
             {
@@ -34,7 +35,8 @@ namespace TwitchDownloader2.CLI
             {
                 new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
                 new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
-                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
+                new KeyboardButton[] { "⛔ Остановить запись", "⚙ Настройки" },
+                new KeyboardButton[] { "🏠 Главная" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
             {
@@ -64,7 +66,8 @@ namespace TwitchDownloader2.CLI
                 new KeyboardButton[] { "❌ Отменить действие" },
                 new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
                 new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
-                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
+                new KeyboardButton[] { "⛔ Остановить запись", "⚙ Настройки" },
+                new KeyboardButton[] { "🏠 Главная" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
             {
@@ -99,7 +102,7 @@ namespace TwitchDownloader2.CLI
         {
             return new ReplyKeyboardMarkup(new[]
             {
-                new KeyboardButton[] { "📂 Папка загрузки", "💾 Сохранить настройки", "⛔ Завершить загрузку" },
+                new KeyboardButton[] { "📂 Папка загрузки", "💾 Сохранить настройки" },
                 new KeyboardButton[] { "[placeholder]", "[placeholder]", "[placeholder]" },
                 new KeyboardButton[] { "[placeholder]", "[placeholder]" },
                 new KeyboardButton[] { "🏠 Вернуться на главную" }
@@ -110,6 +113,37 @@ namespace TwitchDownloader2.CLI
                 ResizeKeyboard = true,
                 OneTimeKeyboard = false
             };
+        }
+
+        public static InlineKeyboardMarkup GetStopDownloadsKeyboard(IEnumerable<ActiveDownloadInfo> downloads)
+        {
+            var rows = downloads.Select(download => new[]
+            {
+                InlineKeyboardButton.WithCallbackData(
+                    $"⛔ {download.Channel} · {download.State}",
+                    CreateStopDownloadCallback(download.SessionId))
+            });
+            return new InlineKeyboardMarkup(rows);
+        }
+
+        internal static string CreateStopDownloadCallback(string sessionId)
+        {
+            return $"stop_download:{sessionId}";
+        }
+
+        internal static bool TryParseStopDownloadCallback(string? callbackData, out string sessionId)
+        {
+            const string prefix = "stop_download:";
+            if (callbackData is not null
+                && callbackData.StartsWith(prefix, StringComparison.Ordinal)
+                && callbackData.Length > prefix.Length)
+            {
+                sessionId = callbackData[prefix.Length..];
+                return true;
+            }
+
+            sessionId = string.Empty;
+            return false;
         }
 
 

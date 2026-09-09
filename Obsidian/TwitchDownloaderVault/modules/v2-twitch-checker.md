@@ -3,45 +3,34 @@
 Parent: [[Index]]
 
 ## Назначение
-Фоновый сервис, который раз в минуту опрашивает все каналы из `Program.Settings.TrackedChannels`, определяет идёт ли live, и при обнаружении стрима — инициирует загрузку через [[modules/v2-twitch-downloader]]. Поддерживает принудительный сброс ожидания через `ForceCheck()`.
+
+Лёгкий async-планировщик. Раз в минуту передаёт снимок отслеживаемых каналов в
+`ITwitchDownloaderService.TryStartDownloadAsync`; сам больше не проверяет Twitch через
+`yt-dlp` и не хранит `IsDownloading`, PID или отметки завершения.
 
 ## Файлы
+
 - `TwitchDownloader2.CLI/TwitchCheckerService.cs`
 
-## Внутреннее состояние
-| Поле | Назначение |
-|------|-----------|
-| `_workerThread` | Background thread с циклом `WorkerLoop` |
-| `_cts` | Отмена работы (используется в Dispose) |
-| `_forceCheckEvent` | `AutoResetEvent`, сигнализирует о принудительной проверке |
-| `_checkInterval` | `TimeSpan.FromMinutes(1)` — период между плановыми проверками |
-| `_channelStates` | `Dictionary<string, ChannelDownloadState>` (case-insensitive) |
-| `_stateLock` | Lock для синхронизации доступа к `_channelStates` |
-
-### Внутренний `ChannelDownloadState`
-- `Channel: string`
-- `IsDownloading: bool`
-- `Pids: List<int>` (заявлено, но не используется активно)
-
 ## Ключевые методы
-| Метод | Описание |
-|-------|---------|
-| `ForceCheck()` | `_forceCheckEvent.Set()` — сбрасывает ожидание и запускает проверку немедленно |
-| `MarkDownloadFinished(channel)` | Сбрасывает `IsDownloading=false` и чистит `Pids` |
-| `GetStatuses()` | Возвращает `IReadOnlyDictionary<string, bool>` по всем `TrackedChannels` |
-| `WorkerLoop()` | Главный цикл: 2 сек pause → перебор каналов → ожидание (`WaitAny` cts/forceCheck/timeout) |
-| `IsDownloading(channel)` | Под локом проверяет state |
-| `TryMarkDownloadStarted(channel)` | Атомарная пометка о старте; возвращает `false` если уже идёт |
-| `IsChannelLive(channel, token)` | Запускает `yt-dlp --quiet --no-warnings --print title <url>` с таймаутом 30 сек. Возврат `ExitCode == 0` |
-| `Dispose()` | Отмена, сигнал events, ожидание потока до 3 сек, иначе `Interrupt()` |
 
-## Зависимости
-- Использует: `yt-dlp` (внешний CLI, см. [[api/external-tools]]), [[modules/v2-app-settings]] (`Program.Settings.TrackedChannels`), [[modules/v2-twitch-downloader]] (`Program.TwitchDownloader.StartDownload`)
-- Используется в: [[modules/v2-program]] (создаётся в `Main`), [[modules/v2-telegram-service]] (`Program.TwitchChecker.ForceCheck()`, `GetStatuses()`)
+| Метод | Описание |
+|-------|----------|
+| `Start(): void` | Один раз запускает async worker после сборки всех зависимостей. |
+| `ForceCheck(): void` | Кладёт единичный сигнал в `SemaphoreSlim`; серия кликов схлопывается. |
+| `CheckNowAsync(cancellationToken): Task` | Параллельно вызывает downloader для уникальных tracked-каналов. |
+| `GetStatuses(): IReadOnlyDictionary<string, bool>` | Строит статус из `GetActiveDownloads()`, не из локальной копии состояния. |
+| `StopAsync(cancellationToken): Task` | Отменяет и ожидает worker. |
+| `Dispose(): void` | Идемпотентно отменяет worker и освобождает примитивы синхронизации. |
 
 ## Важные детали
-- Поток стартует **сразу** в конструкторе, до окончания `Main`.
-- 2-секундная пауза в начале `WorkerLoop` — workaround на гонку с инициализацией остальных сервисов.
-- Если `Program.TwitchDownloader == null` на момент обнаружения live — отметка сбрасывается и попытка повторяется в следующем цикле.
-- `WaitAny` принимает массив `[cts.WaitHandle, _forceCheckEvent]` + timeout. Индекс 0 — отмена (break), 1 — force (продолжаем), timeout — обычная итерация.
-- `Pids` в `ChannelDownloadState` объявлены, но никем не заполняются — задел на будущее.
+
+- `ForceCheck` меняет только расписание. Он не передаёт downloader флаг обхода и потому
+  не может снять pause-until-offline.
+- Разные каналы проверяются через `Task.WhenAll`; правило одной сессии обеспечивает сам downloader.
+- Сетевая ошибка локализована результатом `Failed` и не останавливает следующий цикл.
+
+## Зависимости
+
+- Использует: [[modules/v2-app-settings]], [[modules/v2-twitch-downloader]].
+- Используется в: [[modules/v2-program]], [[modules/v2-telegram-service]].

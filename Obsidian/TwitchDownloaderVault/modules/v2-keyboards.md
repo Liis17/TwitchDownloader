@@ -12,12 +12,14 @@ Parent: [[Index]]
 | Метод | Тип возврата | Описание |
 |-------|-------------|---------|
 | `GetEditPathButton()` | Inline | Одна кнопка "🖊️ Изменить" с callback `editdownloadpath` |
-| `GetMainKeyboard(placeholder)` | Reply | Главное меню: Каналы / Добавить / Удалить, Статус / История / Загрузить, Главная / Настройки, Принудительно обновить |
+| `GetMainKeyboard(placeholder)` | Reply | Главное меню, включая `⛔ Остановить запись` рядом с настройками |
 | `GetDownloadKeyboard(placeholder)` | Reply | Идентична main (заглушка для будущего меню загрузки) |
 | `GetOnlyCancelKeyboard(placeholder)` | Reply | Одна кнопка "❌ Отменить действие" |
 | `GetServiceKeyboard(placeholder)` | Reply | Main + Cancel сверху (для служебных режимов) |
 | `GetDynamicKeyboard(items, placeholder)` | Reply | Динамика: 4 кнопки/ряд из `items` + Cancel сверху. Используется для выбора канала к удалению |
-| `GetSettingsKeyboard()` | Reply | Папка загрузки / Сохранить настройки / ⛔ Завершить загрузку + плейсхолдеры + Вернуться на главную |
+| `GetSettingsKeyboard()` | Reply | Папка загрузки / Сохранить настройки + плейсхолдеры + Вернуться на главную |
+| `GetStopDownloadsKeyboard(downloads)` | Inline | Одна кнопка на active-сессию; callback содержит `stop_download:<sessionId>` |
+| `CreateStopDownloadCallback(sessionId)` / `TryParseStopDownloadCallback(data, out id)` | string / bool | Единый codec callback-данных для защиты от остановки новой сессии старой кнопкой |
 | `GetPathEditKeyboard()` | Reply | Одна кнопка "🏠 Вернуться на главную" |
 
 ## Зависимости
@@ -28,3 +30,4 @@ Parent: [[Index]]
 - `GetDownloadKeyboard` дублирует `GetMainKeyboard` — задел, но кнопка ⬇️ Загрузить пока не имеет своего меню.
 - Кнопки `📜 Статус`, `🏺 История`, `⬇️ Загрузить` — частично заглушки (см. [[api/telegram-commands]]).
 - В `GetSettingsKeyboard` несколько `[placeholder]` — обработчик в Telegram выдаёт заглушечный ответ со ссылкой на сайт.
+- Session ID помещается в callback вместо имени канала; итоговая строка укладывается в лимит Telegram callback data.

@@ -19,7 +19,7 @@ Parent: [[Index]]
 ## Ключевые методы
 | Метод | Описание |
 |-------|---------|
-| `Main(string[] args)` | UTF-8 → SettingsChecker → запуск Telegram → Downloader → Checker → Exit |
+| `Main(string[] args)` | UTF-8 → SettingsChecker → создание Telegram/shared HTTP/downloader/checker → запуск worker и Telegram → Exit |
 | `Exit()` | В интерактивном режиме ждёт `STOP`/`Ctrl+C`, а при redirected stdin ждёт сигнал завершения; сохраняет настройки и останавливает сервисы |
 | `SettingsChecker()` | Использует env/file-настройки; интерактивно запрашивает токен бота и ID администратора только если они отсутствуют |
 | `ConsoleWriteLine(message, color)` | Приватный логгер с префиксом `[CLI]` зелёного цвета |
@@ -36,3 +36,4 @@ Parent: [[Index]]
 - `Uptime` считается от `_startTime = DateTime.Now` (момент загрузки класса).
 - Версия в выводе: `Версия 2.0.0`.
 - Зависимости между сервисами реализованы через **глобальное статическое состояние** (`Program.X`), не через DI.
+- Twitch playback использует один shared `HttpClient`; downloader получает Telegram как `IRecordingNotificationSink`, а checker — интерфейс downloader.

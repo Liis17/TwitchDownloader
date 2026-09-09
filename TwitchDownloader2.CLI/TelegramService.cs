@@ -1,4 +1,5 @@
-﻿using Telegram.Bot;
+using System.Net;
+using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -6,380 +7,453 @@ using Telegram.Bot.Types.ReplyMarkups;
 
 namespace TwitchDownloader2.CLI
 {
-    public class TelegramService
+    public sealed class TelegramService : IRecordingNotificationSink
     {
         private readonly TelegramBotClient _bot;
         private readonly long _ownerId;
-        private CancellationTokenSource? _cts;
-        private string _serviceName = "Telegram";
-        private ConsoleColor _consoleColor = ConsoleColor.Blue;
+        private CancellationTokenSource? _cancellation;
+        private Task? _startupTask;
 
-        private bool _addChannelTrigger = false;
-        private bool _deleteChannelTrigger = false;
-        private bool _editDownloadPathTrigger = false;
-        private bool _stopDownloadTrigger = false;
+        private bool _addChannelTrigger;
+        private bool _deleteChannelTrigger;
+        private bool _editDownloadPathTrigger;
 
-        #region Служебные методы
         public TelegramService(string token, long ownerId)
         {
             _bot = new TelegramBotClient(token);
             _ownerId = ownerId;
         }
 
-        /// <summary>
-        /// Запускает Telegram-сервис в отдельном потоке.
-        /// </summary>
         public void Start()
         {
-            _cts = new CancellationTokenSource();
-
-            Task.Run(() => RunAsync(_cts.Token));
+            _cancellation = new CancellationTokenSource();
+            _startupTask = RunAsync(_cancellation.Token);
         }
 
-        /// <summary>
-        /// Останавливает Telegram-сервис.
-        /// </summary>
         public void Stop()
         {
-            _cts?.Cancel();
+            _cancellation?.Cancel();
         }
 
-        /// <summary>
-        /// Запускает приём апдейтов от Telegram.
-        /// </summary>
-        /// <param name="token">Токен бота</param>
-        /// <returns></returns>
-        private async Task RunAsync(CancellationToken token)
+        private async Task RunAsync(CancellationToken cancellationToken)
         {
             var receiverOptions = new ReceiverOptions
             {
-                AllowedUpdates = Array.Empty<UpdateType>() // получать все типы апдейтов
+                AllowedUpdates = Array.Empty<UpdateType>()
             };
 
-            _bot.StartReceiving(HandleUpdateAsync, HandleErrorAsync, receiverOptions, token);
-
-            var me = await _bot.GetMe(token);
-            ConsoleWriteLine($"✅ Telegram bot запущен как @{me.Username}", ConsoleColor.Gray);
+            _bot.StartReceiving(HandleUpdateAsync, HandleErrorAsync, receiverOptions, cancellationToken);
+            var me = await _bot.GetMe(cancellationToken);
+            ConsoleWriteLine($"✅ Telegram bot запущен как @{me.Username}");
         }
 
-        private void ConsoleWriteLine(string message, ConsoleColor color = ConsoleColor.Gray)
-        {
-            var previousColor = Console.ForegroundColor;
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("[");
-            Console.ForegroundColor = _consoleColor;
-            Console.Write($"{_serviceName}");
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write("] ");
-            Console.ForegroundColor = color;
-            Console.WriteLine(message);
-            Console.ForegroundColor = previousColor;
-        }
-
-        private string ExtractChannelName(string input)
-        {
-            if (string.IsNullOrWhiteSpace(input))
-                return string.Empty;
-
-            input = input.Trim();
-
-            if (input.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                input = input.Substring(8);
-            else if (input.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-                input = input.Substring(7);
-
-            if (input.StartsWith("www.", StringComparison.OrdinalIgnoreCase))
-                input = input.Substring(4);
-
-            if (input.StartsWith("twitch.tv/", StringComparison.OrdinalIgnoreCase))
-                input = input.Substring("twitch.tv/".Length);
-
-            int slashIndex = input.IndexOfAny(new[] { '/', '?', '&' });
-            if (slashIndex >= 0)
-                input = input.Substring(0, slashIndex);
-
-            return input;
-        }
-        private Task HandleErrorAsync(ITelegramBotClient bot, Exception exception, CancellationToken token)
+        private Task HandleErrorAsync(ITelegramBotClient bot, Exception exception, CancellationToken cancellationToken)
         {
             ConsoleWriteLine($"Telegram Error: {exception.Message}", ConsoleColor.DarkRed);
             return Task.CompletedTask;
         }
-        #endregion
 
-        private void disableTriggers()
-        {
-            _addChannelTrigger = false;
-            _deleteChannelTrigger = false;
-            _editDownloadPathTrigger = false;
-            _stopDownloadTrigger = false;
-        }
-        private async Task HandleUpdateAsync(ITelegramBotClient bot, Update update, CancellationToken token)
+        private async Task HandleUpdateAsync(
+            ITelegramBotClient bot,
+            Update update,
+            CancellationToken cancellationToken)
         {
             if (update.Message is { } message)
             {
-                if (message.From == null || message.From.Id != _ownerId)
+                if (message.From?.Id != _ownerId || message.Text is null)
+                    return;
+
+                var sender = string.IsNullOrWhiteSpace(message.From.Username)
+                    ? message.From.Id.ToString()
+                    : message.From.Username;
+                ConsoleWriteLine($"{sender}: {message.Text}");
+                await HandleMessageAsync(message, cancellationToken);
+                return;
+            }
+
+            if (update.CallbackQuery is { } callback && callback.From.Id == _ownerId)
+                await HandleCallbackAsync(bot, callback, cancellationToken);
+        }
+
+        private async Task HandleMessageAsync(Message message, CancellationToken cancellationToken)
+        {
+            var text = message.Text!;
+            if (text == "❌ Отменить действие")
+            {
+                DisableTriggers();
+                await SendMessageAsync(
+                    "❌ <b>Действие отменено</b>",
+                    Keyboards.GetMainKeyboard(),
+                    cancellationToken);
+                return;
+            }
+
+            if (_addChannelTrigger)
+            {
+                var channel = ExtractChannelName(text.Replace(" ", string.Empty).ToLowerInvariant());
+                DisableTriggers();
+                if (!Program.Settings.AddTrackedChannel(channel))
                 {
-                    // Игнорировать чужие сообщения
+                    await SendMessageAsync(
+                        $"⚠️ Канал <b>{Html(channel)}</b> уже был добавлен ранее или его имя пусто",
+                        Keyboards.GetMainKeyboard(),
+                        cancellationToken);
                     return;
                 }
 
-                if (message.Text != null)
-                {
-                    #region Консольный вывод лога
-                    var sender = "";
-                    if (string.IsNullOrEmpty(message.From.Username))
-                    {
-                        sender = message.From.Id.ToString();
-                    }
-                    sender = message.From.Username;
-                    ConsoleWriteLine($"{sender}: {message.Text}");
-                    #endregion
-
-                    if (message.Text == "❌ Отменить действие")
-                    {
-                        disableTriggers();
-                        await SendMessageAsync($"❌ <b>Действие отменено</b>", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                        return;
-                    }
-                    if (!string.IsNullOrEmpty(message.Text))
-                    {
-                        if (_addChannelTrigger)
-                        {
-                            if (Program.Settings.TrackedChannels.Contains(ExtractChannelName(message.Text.Replace(" ", "").ToLower())))
-                            {
-                                await SendMessageAsync($"⚠️ Канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> уже был добавлен ранее", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                                disableTriggers();
-                                return;
-                            }
-                            Program.Settings.TrackedChannels.Add(ExtractChannelName(message.Text.Replace(" ", "").ToLower()));
-                            Program.Settings.Save();
-                            disableTriggers();
-                            await SendMessageAsync($"✨ Канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> добавлен в отслеживаемые", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                            return;
-                        }
-                        if (_deleteChannelTrigger)
-                        {
-                            if (!Program.Settings.TrackedChannels.Contains(ExtractChannelName(message.Text.Replace(" ", "").ToLower())))
-                            {
-                                await SendMessageAsync($"⚠️ Такой канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> отсутствует", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                                disableTriggers();
-                                return;
-                            }
-                            Program.Settings.TrackedChannels.Remove(message.Text.Replace(" ", ""));
-                            Program.Settings.Save();
-                            disableTriggers();
-                            await SendMessageAsync($"🗑️ Канал <b>{ExtractChannelName(message.Text.Replace(" ", "").ToLower())}</b> удален", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                            return;
-                        }
-                        if (_editDownloadPathTrigger)
-                        {
-                            if (!Directory.Exists(message.Text))
-                            {
-                                await SendMessageAsync($"❌ Такой путь не найден", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                            }
-                            else
-                            {
-                                Program.Settings.DownloadPath = message.Text;
-                                await SendMessageAsync($"✨ Путь изменен", replyMarkup: Keyboards.GetPathEditKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                                var path = Program.Settings.DownloadPath.Replace(@"\", @"\\");
-                                Program.Settings.Save();
-                                await SendMessageAsync($"**📂 Папка загрузки**\n\nСейчас загрузка происходит в папку по такому пути:\n```path\n{path}```", Keyboards.GetEditPathButton(), token, parseMode: ParseMode.MarkdownV2);
-                            }
-                            disableTriggers();
-                            return;
-                        }
-                        if (_stopDownloadTrigger)
-                        {
-                            var name = ExtractChannelName(message.Text.Replace(" ", "").ToLower());
-                            bool ok = Program.TwitchDownloader != null && Program.TwitchDownloader.StopDownload(name);
-                            disableTriggers();
-                            await SendMessageAsync(
-                                ok ? $"⛔ Команда на завершение загрузки канала <b>{name}</b> отправлена"
-                                   : $"⚠️ Активной загрузки для канала <b>{name}</b> не найдено",
-                                replyMarkup: Keyboards.GetMainKeyboard(),
-                                parseMode: ParseMode.Html,
-                                cancellationToken: token);
-                            return;
-                        }
-                    }
-                    if (message.Text.StartsWith("/start"))
-                    {
-                        _startMessage();
-                        return;
-                    }
-                    if (message.Text == "➕ Добавить")
-                    {
-                        disableTriggers();
-                        _addChannelTrigger = true;
-                        await SendMessageAsync($"Напиши имя канала или ссылку на Twitch", replyMarkup: Keyboards.GetOnlyCancelKeyboard("Вставить ссылку на Twitch сюда"), cancellationToken: token);
-                        return;
-                    }
-                    if (message.Text == "🗑️ Удалить")
-                    {
-                        disableTriggers();
-                        _deleteChannelTrigger = true;
-                        await SendMessageAsync($"Напиши имя канала который хочешь удалить", replyMarkup: Keyboards.GetDynamicKeyboard(Program.Settings.TrackedChannels, "Можешь выбрать на кнопках ниже"), cancellationToken: token);
-                        return;
-                    }
-                    if (message.Text == "📺 Каналы")
-                    {
-                        var channels = "---- Отслеживаемые каналы на Twitch ----\n";
-                        channels += "<b>" + string.Join("\n", Program.Settings.TrackedChannels.Select(ch => $"🎥 <a href=\"https://www.twitch.tv/{ch}\">{ch}</a>")) + "</b>";
-                        await SendMessageAsync(channels, replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                        disableTriggers();
-                        return;
-                    }
-                    if (message.Text == "🏠 Главная" || message.Text == "🏠 Вернуться на главную")
-                    {
-                        _startMessage();
-                        return;
-                    }
-                    if (message.Text == "🔁 Принудительно обновить")
-                    {
-                        Program.TwitchChecker.ForceCheck();
-                        await SendMessageAsync($"<b>Выполнено</b>", parseMode: ParseMode.Html, replyMarkup: Keyboards.GetMainKeyboard(), cancellationToken: token);
-                        return;
-                    }
-                    if (message.Text == "📜 Статус")
-                    {
-                        var list = Program.TwitchChecker.GetStatuses();
-
-                        string text = "---- Статус отслеживаемых каналов ----\n\n";
-                        foreach (var channel in list)
-                        {
-                            var status = "";
-                            if (channel.Value)
-                            {
-                                status = "🔴";
-                            }
-                            else
-                            {
-                                status = "💤";
-                            }
-                            text += $"{status} {channel.Key}" + "\n";
-                        }
-
-                        await SendMessageAsync(text, replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                        return;
-                    }
-                    if (message.Text == "⬇️ Загрузить")
-                    {
-
-                        await SendMessageAsync("Выберите опцию:", Keyboards.GetDownloadKeyboard(), token, parseMode: ParseMode.Html);
-                        return;
-                    }
-                    if (message.Text == "⚙ Настройки")
-                    {
-                        await SendMessageAsync("Чтобы продолжить нужно выбрать нужный раздел настроек на клавиатуре ниже", Keyboards.GetSettingsKeyboard(), token, parseMode: ParseMode.Html);
-                        return;
-                    }
-                    if (message.Text == "📂 Папка загрузки")
-                    {
-                        await SendMessageAsync($"...", Keyboards.GetPathEditKeyboard(), token, parseMode: ParseMode.Html);
-                        var path = Program.Settings.DownloadPath.Replace(@"\", @"\\");
-                        await SendMessageAsync($"**📂 Папка загрузки**\n\nСейчас загрузка происходит в папку по такому пути:\n```path\n{path}```", Keyboards.GetEditPathButton(), token, parseMode: ParseMode.MarkdownV2);
-                        return;
-                    }
-                    if (message.Text == "💾 Сохранить настройки")
-                    {
-                        await SendMessageAsync($"**💾 Настройки сохранены**", Keyboards.GetMainKeyboard(), token, parseMode: ParseMode.MarkdownV2);
-                        Program.Settings.Save();
-                        return;
-                    }
-                    if (message.Text == "⛔ Завершить загрузку")
-                    {
-                        var active = Program.TwitchDownloader?.GetActiveDownloads() ?? new List<string>();
-                        if (active.Count == 0)
-                        {
-                            await SendMessageAsync("ℹ️ Сейчас активных загрузок нет",
-                                replyMarkup: Keyboards.GetSettingsKeyboard(),
-                                parseMode: ParseMode.Html,
-                                cancellationToken: token);
-                            return;
-                        }
-                        disableTriggers();
-                        _stopDownloadTrigger = true;
-                        await SendMessageAsync("Выбери канал, чью загрузку нужно завершить:",
-                            replyMarkup: Keyboards.GetDynamicKeyboard(active, "Выбери канал на кнопках ниже"),
-                            parseMode: ParseMode.Html,
-                            cancellationToken: token);
-                        return;
-                    }
-                    if (message.Text == "[placeholder]")
-                    {
-
-                        await SendMessageAsync("Действие еще не реализованно, можете проверить обновление на <b><a href=\"https://я.проебал.домен/app/twitchdownloader\">сайте</a></b>", Keyboards.GetMainKeyboard(), token, parseMode: ParseMode.Html);
-                        return;
-                    }
-                    else
-                    {
-                        await SendMessageAsync($"Нет такой команды: <b>{message.Text}</b>", replyMarkup: Keyboards.GetMainKeyboard(), parseMode: ParseMode.Html, cancellationToken: token);
-                    }
-                }
-
-                async void _startMessage()
-                {
-                    disableTriggers();
-                    await SendMessageAsync($"Привет, {message.Chat.FirstName} {message.Chat.LastName}", replyMarkup: Keyboards.GetMainKeyboard(), cancellationToken: token);
-                    await SendMessageAsync(MainPageString(), replyMarkup: Keyboards.GetMainKeyboard(), cancellationToken: token);
-                }
+                Program.Settings.Save();
+                Program.TwitchChecker.ForceCheck();
+                await SendMessageAsync(
+                    $"✨ Канал <b>{Html(channel)}</b> добавлен в отслеживаемые",
+                    Keyboards.GetMainKeyboard(),
+                    cancellationToken);
+                return;
             }
-            else if (update.CallbackQuery is { } callback)
-            {
-                if (callback.From.Id != _ownerId) return;
 
-                switch (callback.Data)
+            if (_deleteChannelTrigger)
+            {
+                var channel = ExtractChannelName(text.Replace(" ", string.Empty).ToLowerInvariant());
+                DisableTriggers();
+                if (!Program.Settings.RemoveTrackedChannel(channel))
                 {
-                    case "info":
-                        await SendMessageAsync("Это информация о сервисе 🧠", cancellationToken: token);
-                        break;
-                    case "settings":
-                        await SendMessageAsync("Здесь будут настройки ⚙", cancellationToken: token);
-                        break;
-                    case "editdownloadpath":
-                        await SendMessageAsync("Введи новый путь к папке для загрузки стримов", Keyboards.GetOnlyCancelKeyboard(), token, ParseMode.Html);
-                        _editDownloadPathTrigger = true;
-                        break;
+                    await SendMessageAsync(
+                        $"⚠️ Такой канал <b>{Html(channel)}</b> отсутствует",
+                        Keyboards.GetMainKeyboard(),
+                        cancellationToken);
+                    return;
                 }
 
-                await bot.AnswerCallbackQuery(callback.Id, cancellationToken: token);
+                Program.Settings.Save();
+                await SendMessageAsync(
+                    $"🗑️ Канал <b>{Html(channel)}</b> удалён",
+                    Keyboards.GetMainKeyboard(),
+                    cancellationToken);
+                return;
+            }
+
+            if (_editDownloadPathTrigger)
+            {
+                DisableTriggers();
+                if (!Directory.Exists(text))
+                {
+                    await SendMessageAsync("❌ Такой путь не найден", Keyboards.GetMainKeyboard(), cancellationToken);
+                    return;
+                }
+
+                Program.Settings.DownloadPath = text;
+                Program.Settings.Save();
+                await SendMessageAsync("✨ Путь изменён", Keyboards.GetPathEditKeyboard(), cancellationToken);
+                await SendDownloadPathAsync(cancellationToken);
+                return;
+            }
+
+            if (text.StartsWith("/start", StringComparison.Ordinal))
+            {
+                await SendStartMessageAsync(message, cancellationToken);
+                return;
+            }
+
+            switch (text)
+            {
+                case "➕ Добавить":
+                    DisableTriggers();
+                    _addChannelTrigger = true;
+                    await SendMessageAsync(
+                        "Напиши имя канала или ссылку на Twitch",
+                        Keyboards.GetOnlyCancelKeyboard("Вставить ссылку на Twitch сюда"),
+                        cancellationToken);
+                    return;
+
+                case "🗑️ Удалить":
+                    DisableTriggers();
+                    _deleteChannelTrigger = true;
+                    await SendMessageAsync(
+                        "Напиши имя канала, который хочешь удалить",
+                        Keyboards.GetDynamicKeyboard(
+                            Program.Settings.GetTrackedChannelsSnapshot(),
+                            "Можешь выбрать на кнопках ниже"),
+                        cancellationToken);
+                    return;
+
+                case "📺 Каналы":
+                    var trackedChannels = Program.Settings.GetTrackedChannelsSnapshot();
+                    var channels = "---- Отслеживаемые каналы на Twitch ----\n";
+                    channels += "<b>" + string.Join(
+                        '\n',
+                        trackedChannels.Select(channel =>
+                            $"🎥 <a href=\"https://www.twitch.tv/{Html(channel)}\">{Html(channel)}</a>")) + "</b>";
+                    await SendMessageAsync(channels, Keyboards.GetMainKeyboard(), cancellationToken);
+                    DisableTriggers();
+                    return;
+
+                case "🏠 Главная":
+                case "🏠 Вернуться на главную":
+                    await SendStartMessageAsync(message, cancellationToken);
+                    return;
+
+                case "🔁 Принудительно обновить":
+                    Program.TwitchChecker.ForceCheck();
+                    await SendMessageAsync("<b>Проверка запрошена</b>", Keyboards.GetMainKeyboard(), cancellationToken);
+                    return;
+
+                case "📜 Статус":
+                    var statuses = Program.TwitchChecker.GetStatuses();
+                    var statusText = "---- Статус отслеживаемых каналов ----\n\n";
+                    statusText += string.Join('\n', statuses.Select(item => $"{(item.Value ? "🔴" : "💤")} {Html(item.Key)}"));
+                    await SendMessageAsync(statusText, Keyboards.GetMainKeyboard(), cancellationToken);
+                    return;
+
+                case "⬇️ Загрузить":
+                    await SendMessageAsync("Выберите опцию:", Keyboards.GetDownloadKeyboard(), cancellationToken);
+                    return;
+
+                case "⚙ Настройки":
+                    await SendMessageAsync(
+                        "Выбери нужный раздел настроек на клавиатуре ниже",
+                        Keyboards.GetSettingsKeyboard(),
+                        cancellationToken);
+                    return;
+
+                case "📂 Папка загрузки":
+                    await SendMessageAsync("...", Keyboards.GetPathEditKeyboard(), cancellationToken);
+                    await SendDownloadPathAsync(cancellationToken);
+                    return;
+
+                case "💾 Сохранить настройки":
+                    Program.Settings.Save();
+                    await SendMessageAsync(
+                        "💾 <b>Настройки сохранены</b>",
+                        Keyboards.GetMainKeyboard(),
+                        cancellationToken);
+                    return;
+
+                case "⛔ Остановить запись":
+                    var active = Program.TwitchDownloader.GetActiveDownloads();
+                    if (active.Count == 0)
+                    {
+                        await SendMessageAsync(
+                            "ℹ️ Сейчас активных записей нет",
+                            Keyboards.GetMainKeyboard(),
+                            cancellationToken);
+                        return;
+                    }
+
+                    await SendMessageAsync(
+                        "Выбери конкретную сессию. Остановка закроет сырьё и продолжит сборку MP4:",
+                        Keyboards.GetStopDownloadsKeyboard(active),
+                        cancellationToken);
+                    return;
+
+                case "[placeholder]":
+                    await SendMessageAsync(
+                        "Действие ещё не реализовано",
+                        Keyboards.GetMainKeyboard(),
+                        cancellationToken);
+                    return;
+
+                default:
+                    await SendMessageAsync(
+                        $"Нет такой команды: <b>{Html(text)}</b>",
+                        Keyboards.GetMainKeyboard(),
+                        cancellationToken);
+                    return;
             }
         }
 
-        /// <summary>
-        /// Отправка сообщения владельцу.
-        /// </summary>
-        public async Task SendMessageAsync(string text, ReplyMarkup? replyMarkup = null, CancellationToken cancellationToken = default, ParseMode parseMode = ParseMode.Html)
+        private async Task HandleCallbackAsync(
+            ITelegramBotClient bot,
+            CallbackQuery callback,
+            CancellationToken cancellationToken)
         {
-            var linkPreview = new LinkPreviewOptions();
-            linkPreview.IsDisabled = true;
+            if (Keyboards.TryParseStopDownloadCallback(callback.Data, out var sessionId))
+            {
+                var result = await Program.TwitchDownloader.RequestStopAsync(sessionId, cancellationToken);
+                var answer = result switch
+                {
+                    StopDownloadResult.Accepted => "Остановка принята",
+                    StopDownloadResult.AlreadyStopping => "Сессия уже завершается",
+                    _ => "Сессия уже завершена или устарела"
+                };
+                await bot.AnswerCallbackQuery(callback.Id, text: answer, cancellationToken: cancellationToken);
+                await SendMessageAsync(
+                    result switch
+                    {
+                        StopDownloadResult.Accepted => "⛔ Запись остановлена, идёт сборка MP4.",
+                        StopDownloadResult.AlreadyStopping => "ℹ️ Запись уже остановлена или MP4 уже собирается.",
+                        _ => "⚠️ Эта кнопка устарела: соответствующей сессии больше нет."
+                    },
+                    Keyboards.GetMainKeyboard(),
+                    cancellationToken);
+                return;
+            }
+
+            switch (callback.Data)
+            {
+                case "info":
+                    await SendMessageAsync("Это информация о сервисе 🧠", cancellationToken: cancellationToken);
+                    break;
+                case "settings":
+                    await SendMessageAsync("Здесь будут настройки ⚙", cancellationToken: cancellationToken);
+                    break;
+                case "editdownloadpath":
+                    DisableTriggers();
+                    _editDownloadPathTrigger = true;
+                    await SendMessageAsync(
+                        "Введи новый путь к папке для загрузки стримов",
+                        Keyboards.GetOnlyCancelKeyboard(),
+                        cancellationToken);
+                    break;
+            }
+
+            await bot.AnswerCallbackQuery(callback.Id, cancellationToken: cancellationToken);
+        }
+
+        public Task RecordingStartedAsync(RecordingStartedInfo info, CancellationToken cancellationToken)
+        {
+            var quality = string.IsNullOrWhiteSpace(info.SelectedQuality) ? "неизвестно" : Html(info.SelectedQuality);
+            var fallback = info.IsSource
+                ? string.Empty
+                : "\n⚠️ Source недоступен, выбран первый вариант.";
+            return SendMessageAsync(
+                $"✨ У <b>{Html(info.Download.Channel)}</b> началась трансляция!\n\n" +
+                $"⬇️ Запись запущена · качество: <b>{quality}</b>{fallback}\n\n" +
+                $"📂 Сырьё: <code>{Html(info.Download.Path)}</code>",
+                cancellationToken: cancellationToken);
+        }
+
+        public Task RecordingCompletedAsync(RecordingCompletionInfo info, CancellationToken cancellationToken)
+        {
+            if (info.Succeeded && info.OutputPath is not null)
+            {
+                return SendMessageAsync(
+                    $"✅ MP4 для <b>{Html(info.Channel)}</b> готов.\n\n" +
+                    $"📂 <code>{Html(info.OutputPath)}</code>\n" +
+                    $"⏱ Длительность: <b>{FormatDuration(info.DurationSeconds)}</b>\n" +
+                    $"💾 Размер: <b>{FormatSize(info.SizeBytes)}</b>\n" +
+                    $"📢 Пропущено рекламы: <b>{info.AdvertisementCount}</b> ({FormatDuration(info.AdvertisementDurationSeconds)})\n" +
+                    $"🕳 Дыр в HLS: <b>{info.GapCount}</b>",
+                    cancellationToken: cancellationToken);
+            }
+
+            var candidate = info.OutputPath is null
+                ? string.Empty
+                : $"\nКандидат MP4: <code>{Html(info.OutputPath)}</code>";
+            return SendMessageAsync(
+                $"⚠️ Не удалось собрать проверенный MP4 для <b>{Html(info.Channel)}</b>.\n" +
+                $"Сырьё сохранено: <code>{Html(info.RawPath)}</code>{candidate}\n" +
+                $"Причина: {Html(info.ErrorMessage ?? "неизвестная ошибка")}",
+                cancellationToken: cancellationToken);
+        }
+
+        public async Task SendMessageAsync(
+            string text,
+            ReplyMarkup? replyMarkup = null,
+            CancellationToken cancellationToken = default,
+            ParseMode parseMode = ParseMode.Html)
+        {
             await _bot.SendMessage(
                 chatId: _ownerId,
                 text: text,
                 parseMode: parseMode,
                 replyMarkup: replyMarkup,
                 cancellationToken: cancellationToken,
-                linkPreviewOptions: linkPreview
-            );
+                linkPreviewOptions: new LinkPreviewOptions { IsDisabled = true });
         }
 
-        public async Task SendNotification(string text)
+        public Task SendNotification(string text)
         {
-            await SendMessageAsync(text, parseMode: ParseMode.Html);
+            return SendMessageAsync(text);
         }
 
-        /// <summary>
-        /// Пример клавиатуры под полем ввода текста.
-        /// </summary>
-
-
-        private string MainPageString()
+        private async Task SendStartMessageAsync(Message message, CancellationToken cancellationToken)
         {
-            return $"" +
-                    $"------------ Общая информация о работе ------------\n\n" +
-                    $"🕓 Аптайм: {Program.Uptime}\n" +
-                    $"📺 Каналы: {Program.Settings.TrackedChannels.Count}";
+            DisableTriggers();
+            await SendMessageAsync(
+                $"Привет, {Html(message.Chat.FirstName)} {Html(message.Chat.LastName)}",
+                Keyboards.GetMainKeyboard(),
+                cancellationToken);
+            await SendMessageAsync(MainPageString(), Keyboards.GetMainKeyboard(), cancellationToken);
+        }
+
+        private Task SendDownloadPathAsync(CancellationToken cancellationToken)
+        {
+            var path = Program.Settings.DownloadPath.Replace(@"\", @"\\");
+            return SendMessageAsync(
+                $"**📂 Папка загрузки**\n\nСейчас загрузка происходит в папку по такому пути:\n```path\n{path}```",
+                Keyboards.GetEditPathButton(),
+                cancellationToken,
+                ParseMode.MarkdownV2);
+        }
+
+        private void DisableTriggers()
+        {
+            _addChannelTrigger = false;
+            _deleteChannelTrigger = false;
+            _editDownloadPathTrigger = false;
+        }
+
+        private static string ExtractChannelName(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return string.Empty;
+
+            input = input.Trim();
+            if (input.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                input = input[8..];
+            else if (input.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+                input = input[7..];
+            if (input.StartsWith("www.", StringComparison.OrdinalIgnoreCase))
+                input = input[4..];
+            if (input.StartsWith("twitch.tv/", StringComparison.OrdinalIgnoreCase))
+                input = input["twitch.tv/".Length..];
+
+            var separator = input.IndexOfAny(['/', '?', '&']);
+            return separator >= 0 ? input[..separator] : input;
+        }
+
+        private static string Html(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
+
+        private static string FormatDuration(double seconds)
+        {
+            var duration = TimeSpan.FromSeconds(Math.Max(0, seconds));
+            return duration.TotalHours >= 1
+                ? $"{(int)duration.TotalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}"
+                : $"{duration.Minutes:00}:{duration.Seconds:00}";
+        }
+
+        private static string FormatSize(long bytes)
+        {
+            string[] units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+            var value = Math.Max(0, bytes);
+            var unit = 0;
+            var display = (double)value;
+            while (display >= 1024 && unit < units.Length - 1)
+            {
+                display /= 1024;
+                unit++;
+            }
+            return $"{display:0.##} {units[unit]}";
+        }
+
+        private static string MainPageString()
+        {
+            return "------------ Общая информация о работе ------------\n\n" +
+                   $"🕓 Аптайм: {Program.Uptime}\n" +
+                   $"📺 Каналы: {Program.Settings.GetTrackedChannelsSnapshot().Count}";
+        }
+
+        private static void ConsoleWriteLine(string message, ConsoleColor color = ConsoleColor.Gray)
+        {
+            var previousColor = Console.ForegroundColor;
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("[");
+            Console.ForegroundColor = ConsoleColor.Blue;
+            Console.Write("Telegram");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("] ");
+            Console.ForegroundColor = color;
+            Console.WriteLine(message);
+            Console.ForegroundColor = previousColor;
         }
     }
 }

@@ -3,48 +3,39 @@
 Parent: [[Index]]
 
 ## Назначение
-Telegram-бот, который обрабатывает сообщения и callback'и от единственного разрешённого пользователя (`Program.Settings.TelegramIdOwner`). Управляет каналами, путём загрузки и инициирует проверки/загрузки. Состояние ввода многошаговых команд хранится в булевых триггерах.
+
+Telegram-интерфейс владельца и реализация `IRecordingNotificationSink`. Управляет tracked-
+каналами, запускает проверки, показывает active-сессии и запрашивает отмену строго по UUID.
 
 ## Файлы
+
 - `TwitchDownloader2.CLI/TelegramService.cs`
 
-## Внутреннее состояние
-| Поле | Тип | Назначение |
-|------|-----|-----------|
-| `_bot` | `TelegramBotClient` | Клиент Telegram.Bot 22.7.4 |
-| `_ownerId` | `long` | ID единственного администратора |
-| `_cts` | `CancellationTokenSource?` | Для остановки приёма апдейтов |
-| `_addChannelTrigger` | `bool` | Ожидаем ли ввод имени для добавления |
-| `_deleteChannelTrigger` | `bool` | Ожидаем ли ввод имени для удаления |
-| `_editDownloadPathTrigger` | `bool` | Ожидаем ли ввод нового пути |
-| `_stopDownloadTrigger` | `bool` | Ожидаем ли выбор канала для принудительного завершения загрузки |
-
-Все четыре триггера сбрасываются методом `disableTriggers()`.
-
 ## Ключевые методы
-| Метод | Описание |
-|-------|---------|
-| `Start()` | Создаёт `_cts` и запускает `RunAsync` в `Task.Run` |
-| `Stop()` | Отменяет `_cts` |
-| `RunAsync(token)` | Стартует приём апдейтов через `_bot.StartReceiving(HandleUpdateAsync, HandleErrorAsync)` |
-| `HandleUpdateAsync(bot, update, token)` | Главный диспетчер: фильтр по `_ownerId`, ветвление по триггерам и тексту кнопок |
-| `HandleErrorAsync(...)` | Логирует ошибку Telegram |
-| `SendMessageAsync(text, replyMarkup, ct, parseMode)` | Отправка владельцу, по умолчанию HTML, превью ссылок выключено |
-| `SendNotification(text)` | Обёртка над `SendMessageAsync` для уведомлений |
-| `ExtractChannelName(input)` | Чистит ссылку до имени канала: убирает `https://`, `www.`, `twitch.tv/`, query-параметры |
-| `disableTriggers()` | Сброс всех четырёх `_*Trigger` в `false` |
-| `MainPageString()` | Текст главной страницы (uptime + кол-во каналов) |
 
-## Обрабатываемые команды
-См. [[api/telegram-commands]] для полного списка кнопок и их поведения.
+| Метод | Описание |
+|-------|----------|
+| `Start(): void` / `Stop(): void` | Запускают long polling и отменяют его при shutdown. |
+| `HandleUpdateAsync(bot, update, cancellationToken): Task` | Отбрасывает чужие апдейты и маршрутизирует message/callback. |
+| `HandleCallbackAsync(bot, callback, cancellationToken): Task` | Разбирает `stop_download:<sessionId>` и вызывает `RequestStopAsync`. |
+| `RecordingStartedAsync(info, cancellationToken): Task` | Показывает канал, качество и путь активного `.recording`. |
+| `RecordingCompletedAsync(info, cancellationToken): Task` | Для успеха показывает MP4, длительность, размер, рекламу и дыры; для ошибки — сохранённые `.failed`. |
+| `SendMessageAsync(text, replyMarkup, cancellationToken, parseMode): Task` | Отправляет сообщение владельцу с выключенным link preview. |
+| `ExtractChannelName(input): string` | Выделяет имя из URL/текста до `/`, `?` или `&`. |
+
+## Отмена записи
+
+1. Кнопка `⛔ Остановить запись` находится в главном меню.
+2. Бот получает `ActiveDownloadInfo` и строит inline-кнопку на каждую сессию.
+3. Callback содержит session ID, а не имя канала.
+4. После `Accepted` бот сразу пишет: «Запись остановлена, идёт сборка MP4».
+5. Устаревший callback получает `NotFound` и не затрагивает replacement-сессию.
+
+Удаление tracked-канала проходит через `AppSettings.RemoveTrackedChannel`, поэтому одновременно
+снимает его persisted-паузу. Булевы триггеры остались только для добавления, удаления и пути.
 
 ## Зависимости
-- Использует: [[modules/v2-keyboards]] (`Keyboards.GetMainKeyboard()` и т.д.), [[modules/v2-app-settings]] (`Program.Settings`), [[modules/v2-twitch-checker]] (`Program.TwitchChecker.ForceCheck()`, `GetStatuses()`)
-- Используется в: [[modules/v2-program]] (создаётся в `Main`), [[modules/v2-twitch-downloader]] (вызывает `SendNotification` при старте и завершении загрузки)
 
-## Важные детали
-- **Многошаговый ввод** реализован через четыре булевых триггера, а не FSM. После одного шага все триггеры сбрасываются.
-- Username отправителя при логировании: если `Username` пустой, используется `Id.ToString()`, но тут есть баг — после этого присваивания строка всё равно перезаписывается на `message.From.Username`.
-- `parseMode` по умолчанию — `ParseMode.Html`. Для текстов с экранированными слешами пути используется `MarkdownV2`.
-- При удалении канала используется `message.Text.Replace(" ", "")` (без `.ToLower()` и `ExtractChannelName()`), тогда как при добавлении нормализация полная — потенциальная асимметрия.
-- На неизвестный текст — `"Нет такой команды: <b>{text}</b>"`.
+- Использует: [[modules/v2-keyboards]], [[modules/v2-app-settings]],
+  [[modules/v2-twitch-checker]], [[modules/v2-twitch-downloader]].
+- Создаётся в: [[modules/v2-program]].
