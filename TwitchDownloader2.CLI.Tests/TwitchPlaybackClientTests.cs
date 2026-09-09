@@ -76,6 +76,27 @@ public sealed class TwitchPlaybackClientTests
         Assert.Null(result.MediaPlaylistUrl);
     }
 
+    [Fact]
+    public async Task FetchSegmentAsync_RetriesFourTimesBeforeGivingUp()
+    {
+        var handler = new QueuedHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            new HttpResponseMessage(HttpStatusCode.BadGateway),
+            new HttpResponseMessage(HttpStatusCode.GatewayTimeout),
+            new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var httpClient = new HttpClient(handler);
+        var delay = new ImmediateDelay();
+        var client = new TwitchPlaybackClient(httpClient, delay);
+
+        var result = await client.FetchSegmentAsync(
+            new Uri("https://video.example/segment.ts"),
+            CancellationToken.None);
+
+        Assert.Null(result);
+        Assert.Equal(4, handler.RequestCount);
+        Assert.Equal(3, delay.Count);
+    }
+
     private static HttpResponseMessage JsonResponse(string json)
     {
         return new HttpResponseMessage(HttpStatusCode.OK)
@@ -95,15 +116,28 @@ public sealed class TwitchPlaybackClientTests
     private sealed class QueuedHttpMessageHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _responses = new(responses);
+        public int RequestCount { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            RequestCount++;
             if (_responses.Count == 0)
                 throw new InvalidOperationException($"Unexpected HTTP request: {request.Method} {request.RequestUri}");
 
             var response = _responses.Dequeue();
             response.RequestMessage = request;
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class ImmediateDelay : IAsyncDelay
+    {
+        public int Count { get; private set; }
+
+        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        {
+            Count++;
+            return Task.CompletedTask;
         }
     }
 }

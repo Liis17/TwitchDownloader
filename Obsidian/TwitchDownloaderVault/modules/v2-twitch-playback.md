@@ -11,6 +11,7 @@ Parent: [[Index]]
 
 - `TwitchDownloader2.CLI/TwitchPlaybackClient.cs` — HTTP-клиент Twitch и повторная загрузка сегментов.
 - `TwitchDownloader2.CLI/HlsPlaylistParser.cs` — разбор master/media HLS playlist.
+- `TwitchDownloader2.CLI/AsyncDelay.cs` — подменяемые retry-задержки клиента и recorder.
 
 ## Ключевые методы
 
@@ -30,6 +31,7 @@ Parent: [[Index]]
 - `EXT-X-TWITCH-PREFETCH` не превращается в готовый сегмент.
 - Используется публичный Client-ID web-плеера Twitch; детали неофициального GraphQL/Usher
   взаимодействия локализованы в одном модуле.
+- Таймаут запроса охватывает не только HTTP-заголовки, но и полное чтение тела ответа.
 
 ## Зависимости
 

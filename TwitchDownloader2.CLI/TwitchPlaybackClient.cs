@@ -34,10 +34,17 @@ namespace TwitchDownloader2.CLI
         private static readonly TimeSpan SegmentTimeout = TimeSpan.FromSeconds(30);
 
         private readonly HttpClient _httpClient;
+        private readonly IAsyncDelay _delay;
 
         public TwitchPlaybackClient(HttpClient httpClient)
+            : this(httpClient, new SystemAsyncDelay())
+        {
+        }
+
+        internal TwitchPlaybackClient(HttpClient httpClient, IAsyncDelay delay)
         {
             _httpClient = httpClient;
+            _delay = delay;
         }
 
         public async Task<TwitchPlaybackResult> ResolveLiveAsync(string channel, CancellationToken cancellationToken)
@@ -104,7 +111,7 @@ namespace TwitchDownloader2.CLI
                 }
 
                 if (attempt < 3)
-                    await Task.Delay(TimeSpan.FromMilliseconds(400 * (attempt + 1)), cancellationToken);
+                    await _delay.DelayAsync(TimeSpan.FromMilliseconds(400 * (attempt + 1)), cancellationToken);
             }
 
             return null;
@@ -183,7 +190,7 @@ namespace TwitchDownloader2.CLI
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(timeout);
-            return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
+            return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, timeoutCts.Token);
         }
 
         private static Uri BuildMasterPlaylistUri(string channel, string token, string signature)
