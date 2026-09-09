@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TwitchDownloader.CLI", "Twi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TwitchDownloader2.CLI", "TwitchDownloader2.CLI\TwitchDownloader2.CLI.csproj", "{C259E65B-9311-4328-8BE2-34A93116F705}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TwitchDownloader2.CLI.Tests", "TwitchDownloader2.CLI.Tests\TwitchDownloader2.CLI.Tests.csproj", "{5F94B30C-6AAB-43A1-A5C7-8BF5AB0CC0E3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{C259E65B-9311-4328-8BE2-34A93116F705}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C259E65B-9311-4328-8BE2-34A93116F705}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C259E65B-9311-4328-8BE2-34A93116F705}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5F94B30C-6AAB-43A1-A5C7-8BF5AB0CC0E3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5F94B30C-6AAB-43A1-A5C7-8BF5AB0CC0E3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5F94B30C-6AAB-43A1-A5C7-8BF5AB0CC0E3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5F94B30C-6AAB-43A1-A5C7-8BF5AB0CC0E3}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

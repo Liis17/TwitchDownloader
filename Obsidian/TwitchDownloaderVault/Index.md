@@ -30,6 +30,7 @@
 | [[modules/v2-telegram-service]] | `TelegramService` | Telegram API, команды владельца и состояния ввода |
 | [[modules/v2-twitch-checker]] | `TwitchCheckerService` | Периодическая проверка live-статуса каналов |
 | [[modules/v2-twitch-downloader]] | `TwitchDownloaderService` | HLS/ffmpeg-сессии, дедупликация и ручная остановка |
+| [[modules/v2-twitch-playback]] | `TwitchPlaybackClient` | Прямой Twitch GraphQL/Usher и разбор HLS playlist |
 | [[modules/v2-keyboards]] | `Keyboards` | Reply/inline-клавиатуры бота |
 
 ### Внешние интерфейсы и развёртывание
