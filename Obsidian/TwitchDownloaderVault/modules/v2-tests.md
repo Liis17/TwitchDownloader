@@ -13,7 +13,9 @@ xUnit-проект для серверного контура v2. Проверя
 - `TwitchDownloader2.CLI.Tests/HlsPlaylistParserTests.cs` — sequence, реклама и `EXT-X-MAP`.
 - `TwitchDownloader2.CLI.Tests/LiveStreamRecorderTests.cs` — dedupe, дыры, retry и token refresh.
 - `TwitchDownloader2.CLI.Tests/MediaFinalizerTests.cs` — MP4 validation, failed-artifacts и recovery.
-- `TwitchDownloader2.CLI.Tests/TwitchDownloaderServiceTests.cs` — одна сессия на канал, отмена, pause и shutdown.
+- `TwitchDownloader2.CLI.Tests/TwitchDownloaderServiceTests.cs` — одна recording-сессия на канал,
+  мгновенное уведомление естественного конца, параллельная финализация/replacement, отмена,
+  pause и shutdown.
 - `TwitchDownloader2.CLI.Tests/TwitchCheckerServiceTests.cs` — scheduler и `ForceCheck` без обхода pause.
 - `TwitchDownloader2.CLI.Tests/KeyboardsTests.cs` — session-ID callback и защита от устаревшей кнопки.
 - `TwitchDownloader2.CLI.Tests/AppSettingsTests.cs` — сериализация state mutation и persistence.

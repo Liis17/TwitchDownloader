@@ -5,8 +5,9 @@ Parent: [[Index]]
 ## Назначение
 
 Владеет полным жизненным циклом live-записи. Для одного канала допускает ровно одну
-сессию, при этом разные каналы записываются параллельно. Checker и Telegram работают
-только с публичным интерфейсом сессий и не управляют HTTP/file/ffmpeg напрямую.
+recording-сессию, при этом финализация предыдущей записи не блокирует новую live-сессию.
+Разные каналы также записываются параллельно. Checker и Telegram работают только с
+публичным интерфейсом сессий и не управляют HTTP/file/ffmpeg напрямую.
 
 ## Файлы
 
@@ -16,7 +17,7 @@ Parent: [[Index]]
 
 | Метод | Описание |
 |-------|----------|
-| `TryStartDownloadAsync(channel: string, cancellationToken: CancellationToken): Task<StartDownloadResult>` | Проверяет active/pause/live, резервирует канал и возвращает `Started`, `AlreadyActive`, `Offline`, `Suppressed` либо `Failed`. |
+| `TryStartDownloadAsync(channel: string, cancellationToken: CancellationToken): Task<StartDownloadResult>` | Проверяет active recording/pause/live, резервирует канал и возвращает `Started`, `AlreadyActive`, `Offline`, `Suppressed` либо `Failed`. |
 | `RequestStopAsync(sessionId: string, cancellationToken: CancellationToken): Task<StopDownloadResult>` | Сохраняет pause-until-offline, отменяет только указанную запись и сразу возвращает `Accepted`, `AlreadyStopping` либо `NotFound`. Ошибка persistence отклоняет stop исключением. |
 | `GetActiveDownloads(): IReadOnlyList<ActiveDownloadInfo>` | Возвращает session ID, канал, UTC-время старта, путь сырья и состояние `Recording`/`Finalizing`. |
 | `StopForShutdownAsync(cancellationToken: CancellationToken): Task` | Отменяет HTTP и media tools, закрывает сырьё и намеренно не запускает/не продолжает финализацию. |
@@ -28,12 +29,18 @@ Parent: [[Index]]
 2. Под lock создаётся UUID сессии и путь
    `live_<channel>_<timestamp>_source_<sessionId>.recording`.
 3. [[modules/v2-media-recording]] пишет HLS в фоне; сессия видна как `Recording`.
-4. Естественный конец и пользовательская отмена переводят её в `Finalizing` и собирают MP4.
-5. Telegram получает итоговый путь, длительность, размер, рекламу и дыры; затем сессия удаляется.
+4. Естественный конец переводит её в `Finalizing`, отправляет `RecordingEndedAsync`, освобождает
+   резерв канала и параллельно запускает сборку MP4; пользовательская отмена переводит сессию
+   в `Finalizing` без уведомления о естественном завершении и с сохраняемой pause-until-offline.
+5. Пока старая сессия финализируется, checker может создать новую запись того же канала.
+6. После проверки MP4 Telegram получает `RecordingCompletedAsync` с итоговым путём,
+   длительностью, размером, рекламой и дырами; затем сессия удаляется.
 
 ## Защита повторного старта
 
-- `_sessionsByChannel` — единственный источник истины об active-сессиях; checker не дублирует флаги.
+- `_sessionsByChannel` — единственный источник истины о recording-сессиях; после естественного
+  конца `Finalizing` остаётся только в `_sessionsById`, а manual/error-сессия удерживает резерв
+  до очистки worker-а. Checker не дублирует флаги.
 - Пользовательский stop сначала добавляет канал в
   `AppSettings.PausedUntilOfflineChannels` и сохраняет настройки, затем отменяет recorder.
 - Live-ответ для paused-канала даёт `Suppressed`; ошибка сети даёт `Failed`, но паузу не снимает.

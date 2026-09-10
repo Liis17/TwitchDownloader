@@ -19,7 +19,7 @@ Parent: [[Index]]
 | `Start(): void` | Один раз запускает async worker после сборки всех зависимостей. |
 | `ForceCheck(): void` | Кладёт единичный сигнал в `SemaphoreSlim`; серия кликов схлопывается. |
 | `CheckNowAsync(cancellationToken: CancellationToken): Task` | Параллельно вызывает downloader для уникальных tracked-каналов. |
-| `GetStatuses(): IReadOnlyDictionary<string, bool>` | Строит статус из `GetActiveDownloads()`, не из локальной копии состояния. |
+| `GetStatuses(): IReadOnlyDictionary<string, bool>` | Строит статус из `GetActiveDownloads()`, не из локальной копии состояния; `true` означает запись или финализацию. |
 | `StopAsync(cancellationToken: CancellationToken): Task` | Отменяет и ожидает worker. |
 | `Dispose(): void` | Идемпотентно отменяет worker и освобождает примитивы синхронизации. |
 
@@ -27,6 +27,8 @@ Parent: [[Index]]
 
 - `ForceCheck` меняет только расписание. Он не передаёт downloader флаг обхода и потому
   не может снять pause-until-offline.
+- Статус канала остаётся `true`, пока есть `Recording` или `Finalizing`; это наличие сессии,
+  а не отдельное подтверждение, что Twitch прямо сейчас live.
 - Разные каналы проверяются через `Task.WhenAll`; правило одной сессии обеспечивает сам downloader.
 - Сетевая ошибка локализована результатом `Failed` и не останавливает следующий цикл.
 

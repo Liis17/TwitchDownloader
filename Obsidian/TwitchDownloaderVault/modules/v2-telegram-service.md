@@ -5,7 +5,8 @@ Parent: [[Index]]
 ## Назначение
 
 Telegram-интерфейс владельца и реализация `IRecordingNotificationSink`. Управляет tracked-
-каналами, запускает проверки, показывает active-сессии и запрашивает отмену строго по UUID.
+каналами, запускает проверки, показывает recording/finalizing-сессии и запрашивает отмену
+строго по UUID.
 
 ## Файлы
 
@@ -19,7 +20,8 @@ Telegram-интерфейс владельца и реализация `IRecordi
 | `HandleUpdateAsync(bot: ITelegramBotClient, update: Update, cancellationToken: CancellationToken): Task` | Отбрасывает чужие апдейты и маршрутизирует message/callback. |
 | `HandleCallbackAsync(bot: ITelegramBotClient, callback: CallbackQuery, cancellationToken: CancellationToken): Task` | Разбирает `stop_download:<sessionId>` и вызывает `RequestStopAsync`. |
 | `RecordingStartedAsync(info: RecordingStartedInfo, cancellationToken: CancellationToken): Task` | Показывает канал, качество и путь активного `.recording`. |
-| `RecordingCompletedAsync(info: RecordingCompletionInfo, cancellationToken: CancellationToken): Task` | Всегда показывает длительность, размер, рекламу и дыры; при успехе — MP4, при ошибке — `.failed`. |
+| `RecordingEndedAsync(info: RecordingEndedInfo, cancellationToken: CancellationToken): Task` | Сразу сообщает о естественном завершении эфира и начале обработки. |
+| `RecordingCompletedAsync(info: RecordingCompletionInfo, cancellationToken: CancellationToken): Task` | Сообщает о завершении обработки; показывает длительность, размер, рекламу и дыры, при успехе — MP4, при ошибке — `.failed`. |
 | `SendMessageAsync(text: string, replyMarkup: ReplyMarkup?, cancellationToken: CancellationToken, parseMode: ParseMode): Task` | Отправляет сообщение владельцу с выключенным link preview. |
 | `ExtractChannelName(input: string): string` | Выделяет имя из URL/текста до `/`, `?` или `&`. |
 
@@ -31,6 +33,11 @@ Telegram-интерфейс владельца и реализация `IRecordi
 4. После `Accepted` бот сразу пишет: «Запись остановлена, идёт сборка MP4».
 5. Устаревший callback получает `NotFound` и не затрагивает replacement-сессию.
 6. Если pause нельзя сохранить, callback сообщает об ошибке, а recorder продолжает работу.
+
+Естественное завершение (`EndList` или подтверждённый `Offline`) даёт отдельное уведомление
+`RecordingEndedAsync` до результата финализации. Обработка запускается параллельно с отправкой
+этого уведомления и не блокирует новую запись того же канала. Ручная отмена не отправляет
+уведомление о естественном завершении эфира.
 
 Удаление tracked-канала проходит через `AppSettings.RemoveTrackedChannel`, поэтому одновременно
 снимает его persisted-паузу. Булевы триггеры остались только для добавления, удаления и пути.

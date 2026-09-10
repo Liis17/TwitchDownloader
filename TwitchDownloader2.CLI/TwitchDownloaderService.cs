@@ -34,6 +34,12 @@ namespace TwitchDownloader2.CLI
         string SelectedQuality,
         bool IsSource);
 
+    public sealed record RecordingEndedInfo(
+        string SessionId,
+        string Channel,
+        double DurationSeconds,
+        bool HasContent);
+
     public sealed record RecordingCompletionInfo(
         string SessionId,
         string Channel,
@@ -50,6 +56,7 @@ namespace TwitchDownloader2.CLI
     public interface IRecordingNotificationSink
     {
         Task RecordingStartedAsync(RecordingStartedInfo info, CancellationToken cancellationToken);
+        Task RecordingEndedAsync(RecordingEndedInfo info, CancellationToken cancellationToken);
         Task RecordingCompletedAsync(RecordingCompletionInfo info, CancellationToken cancellationToken);
     }
 
@@ -357,13 +364,15 @@ namespace TwitchDownloader2.CLI
             LiveRecordingResult? recording = null;
             try
             {
-                var startedNotification = NotifyStartedSafelyAsync(session);
+                // The start notification is best-effort and must not delay end/finalization.
+                _ = NotifyStartedSafelyAsync(session);
                 recording = await _recorder.RecordAsync(
                     session.Channel,
                     session.Playback.MediaPlaylistUrl!,
                     session.RawPath,
                     session.RecordingCancellation.Token);
-                await startedNotification;
+
+                var endedNaturally = recording.EndReason is RecordingEndReason.EndList or RecordingEndReason.Offline;
 
                 lock (_gate)
                 {
@@ -372,8 +381,21 @@ namespace TwitchDownloader2.CLI
                     session.State = ActiveDownloadState.Finalizing;
                 }
 
+                var endedNotification = endedNaturally
+                    ? NotifyEndedSafelyAsync(
+                        new RecordingEndedInfo(
+                            session.SessionId,
+                            session.Channel,
+                            recording.ContentDurationSeconds,
+                            recording.HasContent),
+                        session.FinalizationCancellation.Token)
+                    : Task.CompletedTask;
+
                 if (!recording.HasContent)
                 {
+                    await endedNotification;
+                    if (endedNaturally)
+                        ReleaseRecordingReservation(session);
                     await NotifyCompletedSafelyAsync(new RecordingCompletionInfo(
                         session.SessionId,
                         session.Channel,
@@ -390,11 +412,15 @@ namespace TwitchDownloader2.CLI
                     return;
                 }
 
-                var finalized = await _finalizer.FinalizeAsync(
+                var finalizationTask = _finalizer.FinalizeAsync(
                     recording.RawPath,
                     recording.ContentDurationSeconds,
                     recording.Container,
                     session.FinalizationCancellation.Token);
+                await endedNotification;
+                if (endedNaturally)
+                    ReleaseRecordingReservation(session);
+                var finalized = await finalizationTask;
                 var outputPath = finalized.Status == MediaFinalizeStatus.NoContent
                     ? null
                     : finalized.OutputPath;
@@ -465,13 +491,14 @@ namespace TwitchDownloader2.CLI
 
         private async Task NotifyStartedSafelyAsync(DownloadSession session)
         {
+            var cancellationToken = session.RecordingCancellation.Token;
             try
             {
                 await _notifications.RecordingStartedAsync(
                     new RecordingStartedInfo(ToInfo(session), session.Playback.SelectedQuality, session.Playback.IsSource),
-                    session.RecordingCancellation.Token);
+                    cancellationToken);
             }
-            catch (OperationCanceledException) when (session.RecordingCancellation.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 // A stop request must not be delayed by a Telegram notification.
             }
@@ -496,6 +523,36 @@ namespace TwitchDownloader2.CLI
             catch (Exception ex)
             {
                 ConsoleWriteLine($"Не удалось отправить уведомление о завершении: {ex.Message}", System.ConsoleColor.DarkYellow);
+            }
+        }
+
+        private async Task NotifyEndedSafelyAsync(
+            RecordingEndedInfo info,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _notifications.RecordingEndedAsync(info, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Docker shutdown cancels notification I/O as well as media tools.
+            }
+            catch (Exception ex)
+            {
+                ConsoleWriteLine($"Не удалось отправить уведомление о завершении трансляции: {ex.Message}", System.ConsoleColor.DarkYellow);
+            }
+        }
+
+        private void ReleaseRecordingReservation(DownloadSession session)
+        {
+            lock (_gate)
+            {
+                if (_sessionsByChannel.TryGetValue(session.Channel, out var current)
+                    && ReferenceEquals(current, session))
+                {
+                    _sessionsByChannel.Remove(session.Channel);
+                }
             }
         }
 

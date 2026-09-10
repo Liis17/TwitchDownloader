@@ -337,12 +337,24 @@ namespace TwitchDownloader2.CLI
                 cancellationToken: cancellationToken);
         }
 
+        public Task RecordingEndedAsync(RecordingEndedInfo info, CancellationToken cancellationToken)
+        {
+            var processingMessage = info.HasContent
+                ? "⚙️ Обработка записи началась."
+                : "⚠️ Медиа-сегменты не получены; результат будет отправлен отдельным уведомлением.";
+            return SendMessageAsync(
+                $"🏁 Трансляция <b>{Html(info.Channel)}</b> завершена.\n\n" +
+                $"{processingMessage}\n" +
+                $"⏱ Записано: <b>{FormatDuration(info.DurationSeconds)}</b>",
+                cancellationToken: cancellationToken);
+        }
+
         public Task RecordingCompletedAsync(RecordingCompletionInfo info, CancellationToken cancellationToken)
         {
             if (info.Succeeded && info.OutputPath is not null)
             {
                 return SendMessageAsync(
-                    $"✅ MP4 для <b>{Html(info.Channel)}</b> готов.\n\n" +
+                    $"✅ Обработка записи для <b>{Html(info.Channel)}</b> завершена. MP4 готов.\n\n" +
                     $"📂 <code>{Html(info.OutputPath)}</code>\n" +
                     $"⏱ Длительность: <b>{FormatDuration(info.DurationSeconds)}</b>\n" +
                     $"💾 Размер: <b>{FormatSize(info.SizeBytes)}</b>\n" +
@@ -355,7 +367,8 @@ namespace TwitchDownloader2.CLI
                 ? string.Empty
                 : $"\nКандидат MP4: <code>{Html(info.OutputPath)}</code>";
             return SendMessageAsync(
-                $"⚠️ Не удалось собрать проверенный MP4 для <b>{Html(info.Channel)}</b>.\n" +
+                $"⚠️ Обработка записи для <b>{Html(info.Channel)}</b> завершена с ошибкой.\n" +
+                $"Проверенный MP4 не собран.\n" +
                 $"Сырьё сохранено: <code>{Html(info.RawPath)}</code>{candidate}\n" +
                 $"⏱ Длительность: <b>{FormatDuration(info.DurationSeconds)}</b>\n" +
                 $"💾 Размер failure-артефакта: <b>{FormatSize(info.SizeBytes)}</b>\n" +

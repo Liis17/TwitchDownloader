@@ -32,6 +32,64 @@ public sealed class TwitchDownloaderServiceTests
     }
 
     [Fact]
+    public async Task NaturalEnd_NotifiesImmediatelyAndAllowsReplacementWhileFinalizing()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var settings = CreateSettings(temporaryDirectory.Path);
+        var playback = new ControlledPlaybackClient();
+        playback.EnqueueLive("alpha");
+        playback.EnqueueLive("alpha");
+        playback.EnqueuePlaylist("alpha", """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:2
+            #EXT-X-MEDIA-SEQUENCE:1
+            #EXTINF:2,live
+            content.ts
+            #EXT-X-ENDLIST
+            """);
+        playback.Segments[new Uri("https://video.example/alpha/content.ts")] = Encoding.UTF8.GetBytes("media");
+        var mediaTools = new ControlledMediaToolRunner { BlockFinalization = true, DurationSeconds = 2 };
+        var notifications = new RecordingNotifications { BlockStarted = true, BlockEnded = true };
+        var service = CreateService(settings, playback, mediaTools, notifications);
+
+        Assert.Equal(
+            StartDownloadResult.Started,
+            await service.TryStartDownloadAsync("alpha", CancellationToken.None));
+        var firstSession = Assert.Single(service.GetActiveDownloads());
+
+        await notifications.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var ended = await notifications.Ended.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(firstSession.SessionId, ended.SessionId);
+        Assert.Equal("alpha", ended.Channel);
+
+        await mediaTools.FinalizationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(
+            StartDownloadResult.AlreadyActive,
+            await service.TryStartDownloadAsync("alpha", CancellationToken.None));
+        notifications.ReleaseStarted.TrySetResult();
+        notifications.ReleaseEnded.TrySetResult();
+        Assert.Equal(
+            StartDownloadResult.Started,
+            await StartWhenAvailableAsync(service, "alpha"));
+
+        var active = service.GetActiveDownloads();
+        Assert.Equal(2, active.Count);
+        Assert.Contains(active, download =>
+            download.SessionId == firstSession.SessionId
+            && download.State == ActiveDownloadState.Finalizing);
+        Assert.Contains(active, download =>
+            download.SessionId != firstSession.SessionId
+            && download.State == ActiveDownloadState.Recording);
+
+        mediaTools.ReleaseFinalization.TrySetResult();
+        var completion = await notifications.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(completion.Succeeded, completion.ErrorMessage);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await service.StopForShutdownAsync(timeout.Token);
+    }
+
+    [Fact]
     public async Task RequestStopAsync_ReturnsBeforeFinalizationAndPublishesPartialMp4()
     {
         using var temporaryDirectory = new TemporaryDirectory();
@@ -75,6 +133,7 @@ public sealed class TwitchDownloaderServiceTests
         Assert.True(completion.Succeeded, completion.ErrorMessage);
         Assert.True(File.Exists(completion.OutputPath));
         Assert.Equal(2, completion.DurationSeconds);
+        Assert.False(notifications.Ended.Task.IsCompleted);
         Assert.Empty(service.GetActiveDownloads());
     }
 
@@ -261,6 +320,20 @@ public sealed class TwitchDownloaderServiceTests
             await Task.Delay(10, timeout.Token);
     }
 
+    private static async Task<StartDownloadResult> StartWhenAvailableAsync(
+        TwitchDownloaderService service,
+        string channel)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (true)
+        {
+            var result = await service.TryStartDownloadAsync(channel, CancellationToken.None);
+            if (result != StartDownloadResult.AlreadyActive)
+                return result;
+            await Task.Delay(1, timeout.Token);
+        }
+    }
+
     private sealed class ControlledPlaybackClient : ITwitchPlaybackClient
     {
         private readonly ConcurrentDictionary<string, Queue<object>> _resolutions = new(StringComparer.OrdinalIgnoreCase);
@@ -375,11 +448,37 @@ public sealed class TwitchDownloaderServiceTests
 
     private sealed class RecordingNotifications : IRecordingNotificationSink
     {
+        public bool BlockStarted { get; init; }
+        public bool BlockEnded { get; init; }
+
+        public TaskCompletionSource<RecordingStartedInfo> Started { get; }
+            = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseStarted { get; }
+            = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<RecordingEndedInfo> Ended { get; }
+            = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseEnded { get; }
+            = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource<RecordingCompletionInfo> Completed { get; }
             = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task RecordingStartedAsync(RecordingStartedInfo info, CancellationToken cancellationToken)
-            => Task.CompletedTask;
+        public async Task RecordingStartedAsync(RecordingStartedInfo info, CancellationToken cancellationToken)
+        {
+            Started.TrySetResult(info);
+            if (BlockStarted)
+                await ReleaseStarted.Task.WaitAsync(cancellationToken);
+        }
+
+        public async Task RecordingEndedAsync(RecordingEndedInfo info, CancellationToken cancellationToken)
+        {
+            Ended.TrySetResult(info);
+            if (BlockEnded)
+                await ReleaseEnded.Task.WaitAsync(cancellationToken);
+        }
 
         public Task RecordingCompletedAsync(RecordingCompletionInfo info, CancellationToken cancellationToken)
         {
