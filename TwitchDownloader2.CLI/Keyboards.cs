@@ -17,7 +17,8 @@ namespace TwitchDownloader2.CLI
             return new ReplyKeyboardMarkup(new[]
             {
                 new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
-                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись", "⚙ Настройки" },
+                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись" },
+                new KeyboardButton[] { "⚙ Настройки" },
                 new KeyboardButton[] { "🏠 Главная" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
@@ -33,7 +34,8 @@ namespace TwitchDownloader2.CLI
             return new ReplyKeyboardMarkup(new[]
             {
                 new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
-                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись", "⚙ Настройки" },
+                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись" },
+                new KeyboardButton[] { "⚙ Настройки" },
                 new KeyboardButton[] { "🏠 Главная" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
@@ -63,7 +65,8 @@ namespace TwitchDownloader2.CLI
             {
                 new KeyboardButton[] { "❌ Отменить действие" },
                 new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
-                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись", "⚙ Настройки" },
+                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись" },
+                new KeyboardButton[] { "⚙ Настройки" },
                 new KeyboardButton[] { "🏠 Главная" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
