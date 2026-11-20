@@ -18,8 +18,7 @@ namespace TwitchDownloader2.CLI
             {
                 new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
                 new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись" },
-                new KeyboardButton[] { "⚙ Настройки" },
-                new KeyboardButton[] { "🏠 Главная" },
+                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
             {
@@ -35,8 +34,7 @@ namespace TwitchDownloader2.CLI
             {
                 new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
                 new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись" },
-                new KeyboardButton[] { "⚙ Настройки" },
-                new KeyboardButton[] { "🏠 Главная" },
+                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
             {
@@ -66,8 +64,7 @@ namespace TwitchDownloader2.CLI
                 new KeyboardButton[] { "❌ Отменить действие" },
                 new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
                 new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись" },
-                new KeyboardButton[] { "⚙ Настройки" },
-                new KeyboardButton[] { "🏠 Главная" },
+                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
             {
