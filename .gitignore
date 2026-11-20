@@ -368,3 +368,6 @@ MigrationBackup/
 FodyWeavers.xsd
 /TwitchDownloader.CLI/Properties/launchSettings.json
 .DS_Store
+
+# Профили LLVM от инструментированных бинарников
+default.profraw
