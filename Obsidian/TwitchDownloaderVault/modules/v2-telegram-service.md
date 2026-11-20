@@ -41,7 +41,6 @@ Telegram-интерфейс владельца и реализация `IRecordi
 
 Удаление tracked-канала проходит через `AppSettings.RemoveTrackedChannel`, поэтому одновременно
 снимает его persisted-паузу. Булевы триггеры остались только для добавления, удаления и пути.
-~~`_stopDownloadTrigger`~~ удалён 2026-09-10: выбор канала текстом заменён inline session callback.
 
 ## Зависимости
 

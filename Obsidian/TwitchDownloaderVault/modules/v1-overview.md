@@ -17,14 +17,14 @@ Parent: [[Index]]
 | Аспект | v1 | v2 |
 |--------|----|----|
 | Runtime | .NET 8 | .NET 10 |
-| Хранение настроек | `token`, `id`, `tracked_channels.txt` отдельно | Единый `Data/settings.data` (Base64 JSON) |
-| Клавиатуры | Inline (`InlineKeyboardMarkup`) | Reply (`ReplyKeyboardMarkup`) |
+| Хранение настроек | `token`, `id`, `tracked_channels.txt` отдельно | Единый `Data/settings.data` (Base64 JSON) + env-переменные |
+| Клавиатуры | Inline (`InlineKeyboardMarkup`) | Reply-меню; inline только для пути и остановки записи |
 | Состояние диалога | `Dictionary<long, string> _pendingActions` | Булевы триггеры `_addChannelTrigger` и т.д. |
-| Имена файлов | `{channel}_{type}_{guidShort6}.{ext}` (`audio1`/`audio2`/`video`) | `{channel}_{type}_{N}_{sessionCode6}.{ext}` |
-| Дедупликация | Нет | SHA256-сравнение, удаление дубликата |
-| Расширения | video=`.ts` (комментарий упоминает `.mp4`), audio=`.aac` (`-acodec copy`) | video=`.ts` mpegts, audio=`.aac` adts перекодированное |
-| Уведомления | `NotifyDownloadStart`/`NotifyDownloadComplete` методы | Inline в `StartDownload` |
-| Конвертация | Есть `ConverterService` (но callback `convert:` закомментирован) | Нет |
+| Получение потока | `yt-dlp -g`, отдельные ffmpeg-процессы видео и двух аудио | Twitch GraphQL/Usher, один HLS-поток в `.recording` |
+| Имена файлов | `{channel}_{type}_{guidShort6}.{ext}` (`audio1`/`audio2`/`video`) | `live_<channel>_<timestamp>_source_<sessionId>.recording` → `.mp4` |
+| Расширения | video=`.ts` (комментарий упоминает `.mp4`), audio=`.aac` (`-acodec copy`) | Сырьё MPEG-TS или fMP4, итог — проверенный MP4 |
+| Уведомления | `NotifyDownloadStart`/`NotifyDownloadComplete` методы | `IRecordingNotificationSink`: старт, конец эфира, завершение обработки |
+| Конвертация | Есть `ConverterService` (callback `convert:` вызывает его с пустыми путями) | Финализация `MediaFinalizer` |
 | Права | Требует Administrator | Не требует |
 
 ## Важные детали

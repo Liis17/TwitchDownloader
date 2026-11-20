@@ -28,6 +28,6 @@ Parent: [[Index]]
 ## Важные детали
 - Все клавиатуры — `IsPersistent = true, ResizeKeyboard = true, OneTimeKeyboard = false`.
 - `GetDownloadKeyboard` дублирует `GetMainKeyboard` — задел, но кнопка ⬇️ Загрузить пока не имеет своего меню.
-- Кнопки `📜 Статус`, `🏺 История`, `⬇️ Загрузить` — частично заглушки (см. [[api/telegram-commands]]).
+- `🏺 История` не обрабатывается, `⬇️ Загрузить` показывает копию главного меню (см. [[api/telegram-commands]]).
 - В `GetSettingsKeyboard` несколько `[placeholder]` — обработчик отвечает обычным текстом-заглушкой.
 - Session ID помещается в callback вместо имени канала; итоговая строка укладывается в лимит Telegram callback data.

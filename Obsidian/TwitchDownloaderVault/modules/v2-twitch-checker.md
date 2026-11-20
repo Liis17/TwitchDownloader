@@ -36,9 +36,3 @@ Parent: [[Index]]
 
 - Использует: [[modules/v2-app-settings]], [[modules/v2-twitch-downloader]].
 - Используется в: [[modules/v2-program]], [[modules/v2-telegram-service]].
-
-## Удалённый API старой схемы
-
-- ~~`MarkDownloadFinished(channel: string): void`~~ (удалён: 2026-09-10) — active-state принадлежит downloader.
-- ~~`IsChannelLive(channel: string, token: CancellationToken): bool`~~ (удалён: 2026-09-10) — live/offline возвращает playback client внутри downloader.
-- ~~`TryMarkDownloadStarted(channel: string): bool`~~ (удалён: 2026-09-10) — атомарность обеспечивает session registry downloader.

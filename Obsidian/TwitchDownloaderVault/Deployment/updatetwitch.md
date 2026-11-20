@@ -48,4 +48,4 @@ Compose-файл `docker/docker-compose.yml`.
 ## Зависимости
 
 - Использует: [[api/docker]], `git`, Docker Compose.
-- Используется в: [[Index]], [[Архитектура]].
+- Используется в: [[Index]], [[Architecture|Архитектура]].

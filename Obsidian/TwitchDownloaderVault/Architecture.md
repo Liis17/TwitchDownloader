@@ -1,6 +1,17 @@
-# Архитектура
+# Architecture
 
 Parent: [[Index]]
+
+## Проекты
+
+| Проект | Путь | Назначение | Связи |
+|--------|------|------------|-------|
+| `TwitchDownloader2.CLI` | `TwitchDownloader2.CLI/` | Основное приложение: проверка каналов, запись, финализация, Telegram-бот | Собирается в Docker-образ `docker/Dockerfile` |
+| `TwitchDownloader2.CLI.Tests` | `TwitchDownloader2.CLI.Tests/` | xUnit-тесты v2 | `ProjectReference` на v2, доступ к `internal` через `Properties/AssemblyInfo.cs` |
+| `TwitchDownloader.CLI` | `TwitchDownloader.CLI/` | Legacy v1 (Windows, .NET 8) | Независим от v2; общий только `TwitchDownloader.sln` |
+
+Развёртывание: `docker/` (Compose) и `scripts/updatetwitch` — см. [[api/docker]], [[Deployment/updatetwitch]].
+Термины — [[Glossary|словарь]].
 
 ## Tech Stack
 

@@ -39,4 +39,3 @@ Parent: [[Index]]
 - Зависимости между сервисами реализованы через **глобальное статическое состояние** (`Program.X`), не через DI.
 - Twitch playback использует один shared `HttpClient`; downloader получает Telegram как `IRecordingNotificationSink`, а checker — интерфейс downloader.
 - Recovery запускается до checker, а перечисление orphan-файлов выполняется до появления новых active-сессий.
-- ~~`Exit()`~~ (удалён: 2026-09-10) — заменён на ожидаемый `ExitAsync()`.

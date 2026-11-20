@@ -15,9 +15,9 @@ xUnit-проект для серверного контура v2. Проверя
 - `TwitchDownloader2.CLI.Tests/MediaFinalizerTests.cs` — MP4 validation, failed-artifacts и recovery.
 - `TwitchDownloader2.CLI.Tests/TwitchDownloaderServiceTests.cs` — одна recording-сессия на канал,
   мгновенное уведомление естественного конца, параллельная финализация/replacement, отмена,
-  pause и shutdown.
+  pause, устаревшая кнопка остановки и shutdown/recovery.
 - `TwitchDownloader2.CLI.Tests/TwitchCheckerServiceTests.cs` — scheduler и `ForceCheck` без обхода pause.
-- `TwitchDownloader2.CLI.Tests/KeyboardsTests.cs` — session-ID callback и защита от устаревшей кнопки.
+- `TwitchDownloader2.CLI.Tests/KeyboardsTests.cs` — callback остановки содержит session ID, а не имя канала.
 - `TwitchDownloader2.CLI.Tests/AppSettingsTests.cs` — сериализация state mutation и persistence.
 
 ## Запуск
@@ -29,11 +29,11 @@ dotnet test TwitchDownloader.sln
 ## Инварианты
 
 - Тесты не требуют Twitch credentials, Telegram token, `ffmpeg` или Docker.
-- Реальные `ffmpeg`/`ffprobe` и Twitch проверяются отдельным smoke-тестом окружения.
+- Реальные `ffmpeg`/`ffprobe`, Twitch и Telegram автоматическими тестами не покрываются; их проверяют ручным запуском.
 - Legacy `TwitchDownloader.CLI` не является тестовой целью этого проекта.
 
 ## Зависимости
 
 - Тестирует: [[modules/v2-twitch-playback]], [[modules/v2-media-recording]],
   [[modules/v2-twitch-downloader]], [[modules/v2-twitch-checker]],
-  [[modules/v2-telegram-service]], [[modules/v2-app-settings]].
+  [[modules/v2-keyboards]], [[modules/v2-app-settings]].

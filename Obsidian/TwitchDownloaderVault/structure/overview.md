@@ -15,9 +15,6 @@ TwitchDownloader/
 │   ├── DownloadService.cs         # Управление ffmpeg-процессами
 │   ├── ConverterService.cs        # Конвертация/слияние видео+аудио
 │   ├── TelegramService.cs         # Бот: меню, отслеживание, мониторинг
-│   ├── DB/                        # (пустая папка)
-│   ├── Properties/
-│   │   └── PublishProfiles/
 │   ├── TwitchDownloader.CLI.csproj
 │   └── bin/ obj/
 │
@@ -33,9 +30,7 @@ TwitchDownloader/
 │   ├── MediaFinalizer.cs          # MP4 validation и recovery
 │   ├── MediaToolRunner.cs         # Адаптер ffmpeg/ffprobe
 │   ├── Keyboards.cs               # Reply/Inline клавиатуры бота
-│   ├── Properties/
-│   │   ├── PublishProfiles/
-│   │   └── launchSettings.json
+│   ├── Properties/AssemblyInfo.cs # InternalsVisibleTo для тестов
 │   ├── TwitchDownloader2.CLI.csproj
 │   └── bin/ obj/
 │
@@ -81,8 +76,8 @@ Dockerfile собирает v2 на .NET 10 и устанавливает `ffmpe
 |------|-----------|
 | `TwitchDownloader.sln` | VS solution, format 12.00, VS18 |
 | `*.csproj` | Project files (см. [[structure/entrypoints]]) |
-| `Properties/launchSettings.json` | Профиль запуска для v2 |
-| `Properties/PublishProfiles/` | Профили публикации (пустые в обоих проектах) |
+| `TwitchDownloader2.CLI/Properties/AssemblyInfo.cs` | Открывает `internal`-типы v2 тестовому проекту |
+| `docker/.env.example` | Шаблон `docker/.env` с Telegram-переменными |
 | `Data/settings.data` (runtime, v2) | Base64 JSON с настройками |
 | `token`, `id` (runtime, v1) | Токен бота и Telegram ID администратора |
 | `tracked_channels.txt` (runtime, v1) | Список отслеживаемых каналов |

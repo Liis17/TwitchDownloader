@@ -53,10 +53,3 @@ recording-сессию, при этом финализация предыдущ�
   [[modules/v2-media-recording]], `IRecordingNotificationSink`.
 - Используется в: [[modules/v2-program]], [[modules/v2-twitch-checker]],
   [[modules/v2-telegram-service]].
-
-## Удалённый API старой схемы
-
-- ~~`StartDownload(channelName: string): Task`~~ (удалён: 2026-09-10) — заменён на ожидаемый `TryStartDownloadAsync`.
-- ~~`StopDownload(channel: string): bool`~~ (удалён: 2026-09-10) — заменён на адресный `RequestStopAsync(sessionId)`.
-- ~~`ResolveHlsUrl(channel: string): string`~~ (удалён: 2026-09-10) — вместо `yt-dlp` используется playback client.
-- ~~`StartFfmpegProcess(...)` / `FilesEqualByHash(...)`~~ (удалены: 2026-09-10) — четыре потока и SHA256-дедупликация больше не нужны.

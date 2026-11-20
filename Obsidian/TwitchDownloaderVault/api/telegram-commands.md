@@ -2,7 +2,7 @@
 
 Parent: [[Index]]
 
-Все команды обрабатываются в `HandleUpdateAsync` файла `TwitchDownloader2.CLI/TelegramService.cs`. Доступ только для пользователя с `Id == Program.Settings.TelegramIdOwner`.
+Все команды обрабатываются в `HandleUpdateAsync` файла `TwitchDownloader2.CLI/TelegramService.cs`. Доступ только владельцу: `From.Id` сообщения или callback должен совпадать с `TelegramIdOwner`, переданным в конструктор.
 
 ## Текстовые команды
 
@@ -16,7 +16,7 @@ Parent: [[Index]]
 | Кнопка | Действие |
 |--------|---------|
 | `📺 Каналы` | Список `TrackedChannels` со ссылками `https://www.twitch.tv/{name}` |
-| `➕ Добавить` | Включает `_addChannelTrigger`, клавиатура с одной кнопкой "Отменить действие". Следующий текст пользователя добавляется в `TrackedChannels` после `ExtractChannelName().ToLower()` |
+| `➕ Добавить` | Включает `_addChannelTrigger`, клавиатура с одной кнопкой "Отменить действие". Следующий текст пользователя добавляется в `TrackedChannels` после `ExtractChannelName().ToLower()`, затем настройки сохраняются и вызывается `ForceCheck()` |
 | `🗑️ Удалить` | Включает `_deleteChannelTrigger`, динамическая клавиатура из текущих каналов. Следующий текст удаляется из `TrackedChannels` |
 | `📜 Статус` | `TwitchChecker.GetStatuses()` → таблица каналов с эмодзи 🔴 (есть active download-сессия) / 💤 (активной сессии нет) |
 | `🏺 История` | **Не обработано**, упадёт в default → "Нет такой команды" |
