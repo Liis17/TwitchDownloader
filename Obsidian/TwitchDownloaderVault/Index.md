@@ -43,7 +43,7 @@
 | [[api/telegram-commands]] | Telegram API | Команды, кнопки и callback'и v2 |
 | [[api/external-tools]] | `ffmpeg` / `ffprobe` | Media-финализация v2 и legacy-зависимости v1 |
 | [[api/docker]] | Docker Compose | Образ, env-файл, volumes и запуск v2 |
-| [[Deployment/updatetwitch]] | `scripts/updatetwitch` | Безопасное обновление сервера одной командой |
+| [[Deployment/update]] | `update.sh` | Обновление сервера одной командой без потери данных контейнера |
 
 ## Стек технологий
 
@@ -70,7 +70,7 @@
 | `README.md` | Описание возможностей и инструкции запуска |
 | `docker/Dockerfile` | Сборка и runtime-образ v2 с `ffmpeg`/`ffprobe` |
 | `docker/docker-compose.yml` | Сервис v2 и volumes для настроек/загрузок |
-| `scripts/updatetwitch` | Проверка репозитория, обновление, сборка и восстановление контейнера |
+| `update.sh` | Проверка репозитория, `git pull`, сборка образа и перезапуск контейнера |
 
 ## Обновление памяти
 

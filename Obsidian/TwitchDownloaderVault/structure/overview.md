@@ -43,7 +43,7 @@ TwitchDownloader/
 │   ├── docker-compose.yml
 │   ├── .env.example
 │   └── README.md
-├── scripts/updatetwitch             # Серверное автообновление
+├── update.sh                       # Серверное обновление: git pull + пересборка контейнера
 │
 └── Obsidian/
     └── TwitchDownloaderVault/     # Эта vault-память проекта
@@ -61,11 +61,11 @@ TwitchDownloader/
 xUnit-проект на .NET 10 с подставными HTTP/process/delay-адаптерами. Проверяет HLS,
 конкурентные сессии, отмену, persisted pause, shutdown и recovery. См. [[modules/v2-tests]].
 
-### `docker/` и `scripts/` — развёртывание
+### `docker/` и `update.sh` — развёртывание
 Dockerfile собирает v2 на .NET 10 и устанавливает `ffmpeg`/`ffprobe`; Compose
-монтирует `Data` и `Downloads`. `scripts/updatetwitch` обновляет ветку `master`,
-пересобирает образ и пытается восстановить контейнер при ошибке. См. [[api/docker]]
-и [[Deployment/updatetwitch]].
+монтирует `Data` и `Downloads`. `update.sh` обновляет ветку `master`,
+пересобирает образ и пересоздаёт контейнер, не трогая его данные. См. [[api/docker]]
+и [[Deployment/update]].
 
 ### `Obsidian/TwitchDownloaderVault/`
 Долговременная память проекта в формате Obsidian Vault. Связи между заметками через wikilinks.

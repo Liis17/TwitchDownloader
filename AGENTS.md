@@ -1,6 +1,6 @@
 # TwitchDownloader
 
-TwitchDownloader — консольное приложение на C#, которое отслеживает Twitch-каналы, записывает их live-трансляции в MP4 и управляется через Telegram-бота. Основная версия — `TwitchDownloader2.CLI` (.NET 10, Twitch GraphQL/Usher HLS, `ffmpeg`/`ffprobe`, Docker) с xUnit-тестами `TwitchDownloader2.CLI.Tests`; `TwitchDownloader.CLI` — legacy-версия на .NET 8 для Windows с `yt-dlp`. Развёртывание — Docker Compose (`docker/`) и серверный updater `scripts/updatetwitch`.
+TwitchDownloader — консольное приложение на C#, которое отслеживает Twitch-каналы, записывает их live-трансляции в MP4 и управляется через Telegram-бота. Основная версия — `TwitchDownloader2.CLI` (.NET 10, Twitch GraphQL/Usher HLS, `ffmpeg`/`ffprobe`, Docker) с xUnit-тестами `TwitchDownloader2.CLI.Tests`; `TwitchDownloader.CLI` — legacy-версия на .NET 8 для Windows с `yt-dlp`. Развёртывание — Docker Compose (`docker/`) и серверный скрипт обновления `./update.sh`.
 
 <!-- obsidian:start -->
 ## Память проекта — Obsidian
@@ -14,7 +14,7 @@ Vault: `Obsidian/TwitchDownloaderVault` — актуальное описани�
 | `Obsidian/TwitchDownloaderVault/Glossary.md` | Словарь терминов предметной области |
 | `Obsidian/TwitchDownloaderVault/modules/` | Компоненты `TwitchDownloader2.CLI`, тесты и legacy v1 |
 | `Obsidian/TwitchDownloaderVault/api/` | Telegram-команды, `ffmpeg`/`ffprobe`, Docker |
-| `Obsidian/TwitchDownloaderVault/Deployment/` | Серверный updater `scripts/updatetwitch` |
+| `Obsidian/TwitchDownloaderVault/Deployment/` | Серверный скрипт обновления `update.sh` |
 | `Obsidian/TwitchDownloaderVault/structure/` | Структура репозитория и точки входа |
 
 ### Как пользоваться памятью
@@ -48,7 +48,7 @@ Vault: `Obsidian/TwitchDownloaderVault` — актуальное описани�
 
 | Ветка | Назначение |
 |-------|------------|
-| `master` | Основная ветка и ветка разработки; из неё обновляется сервер (`scripts/updatetwitch`) |
+| `master` | Основная ветка и ветка разработки; из неё обновляется сервер (`./update.sh`) |
 
 - Изменения попадают в `master` прямыми коммитами, без Pull Request.
 - Работай в текущей ветке. Отдельную ветку или worktree создавай только по явному указанию пользователя.
@@ -87,7 +87,7 @@ Vault: `Obsidian/TwitchDownloaderVault` — актуальное описани�
 ### Затронутые компоненты
 
 - `TwitchDownloader2.CLI`, `TwitchDownloader2.CLI.Tests`, legacy `TwitchDownloader.CLI`: проверь вызовы изменённого кода — связи через статические `Program.*`, `ITwitchDownloaderService`, `IRecordingNotificationSink`, `ITwitchPlaybackClient`, Telegram-обработчики и callback `stop_download:<sessionId>`.
-- Контракты: при изменении формата `Data/settings.data` (Base64 JSON), env-переменных (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID`, `DOWNLOAD_PATH`), имён файлов записи (`.recording`, `.mp4`, `.failed`), callback data Telegram или Docker/Compose-конфигурации проверь всех производителей и потребителей, включая восстановление и `scripts/updatetwitch`.
+- Контракты: при изменении формата `Data/settings.data` (Base64 JSON), env-переменных (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID`, `DOWNLOAD_PATH`), имён файлов записи (`.recording`, `.mp4`, `.failed`), callback data Telegram или Docker/Compose-конфигурации проверь всех производителей и потребителей, включая восстановление и `update.sh`.
 - Совместимость: не ломай существующие контракты и сохранённые данные без явной необходимости.
 - Обратные операции: если добавлена возможность создать, включить или подключить, проверь, нужны ли удаление, отключение и восстановление.
 
@@ -101,7 +101,7 @@ Vault: `Obsidian/TwitchDownloaderVault` — актуальное описани�
 
 ### Безопасность окружения
 
-- Не выполняй `docker compose -f docker/docker-compose.yml down -v`, `updatetwitch` на сервере и не удаляй `docker/data/`, `docker/downloads/` и записи пользователя без разрешения.
+- Не выполняй `docker compose -f docker/docker-compose.yml down -v`, `update.sh` на сервере и не удаляй `docker/data/`, `docker/downloads/` и записи пользователя без разрешения.
 - Останавливай только процессы, принадлежность которых текущей задаче подтверждена. Не используй `pkill -f` по шаблону имени.
 - Не изменяй секреты, токены и реальные конфигурации (`docker/.env`, `Data/settings.data`, переменные окружения Telegram) без необходимости и разрешения.
 - Не коммить временные файлы агента, дампы, логи и исследовательские заметки.

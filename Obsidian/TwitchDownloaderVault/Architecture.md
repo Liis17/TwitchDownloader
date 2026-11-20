@@ -10,7 +10,7 @@ Parent: [[Index]]
 | `TwitchDownloader2.CLI.Tests` | `TwitchDownloader2.CLI.Tests/` | xUnit-тесты v2 | `ProjectReference` на v2, доступ к `internal` через `Properties/AssemblyInfo.cs` |
 | `TwitchDownloader.CLI` | `TwitchDownloader.CLI/` | Legacy v1 (Windows, .NET 8) | Независим от v2; общий только `TwitchDownloader.sln` |
 
-Развёртывание: `docker/` (Compose) и `scripts/updatetwitch` — см. [[api/docker]], [[Deployment/updatetwitch]].
+Развёртывание: `docker/` (Compose) и `update.sh` — см. [[api/docker]], [[Deployment/update]].
 Термины — [[Glossary|словарь]].
 
 ## Tech Stack
