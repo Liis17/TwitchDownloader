@@ -38,8 +38,11 @@ main() {
     git remote get-url origin >/dev/null 2>&1 || fail "Не найден Git remote origin."
 
     # docker/data, docker/downloads и docker/.env игнорируются Git и сюда не попадают.
-    if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
-        fail "В репозитории есть незакоммиченные изменения. Сначала сохраните их или уберите."
+    local dirty
+    dirty="$(git status --porcelain --untracked-files=all)"
+    if [[ -n "$dirty" ]]; then
+        printf '%s\n' "$dirty" >&2
+        fail "В репозитории есть незакоммиченные изменения (список выше). Сначала сохраните их или уберите."
     fi
 
     local old_commit new_commit
