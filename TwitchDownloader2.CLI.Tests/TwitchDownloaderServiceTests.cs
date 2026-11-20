@@ -297,6 +297,81 @@ public sealed class TwitchDownloaderServiceTests
         Assert.True(File.Exists(Path.ChangeExtension(rawPath, ".mp4")));
     }
 
+    [Fact]
+    public async Task VodDownload_IsRecordedAsVodWithoutStreamEndNotification()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var settings = CreateSettings(temporaryDirectory.Path);
+        var playback = new ControlledPlaybackClient();
+        playback.VodChannels["123"] = "alpha";
+        playback.EnqueuePlaylist("vod123", """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:2
+            #EXTINF:2,
+            0.ts
+            #EXT-X-ENDLIST
+            """);
+        playback.Segments[new Uri("https://video.example/vod123/0.ts")] = Encoding.UTF8.GetBytes("media");
+        var notifications = new RecordingNotifications();
+        var service = CreateService(settings, playback, new ControlledMediaToolRunner { DurationSeconds = 2 }, notifications);
+
+        Assert.Equal(
+            StartVodDownloadResult.NotFound,
+            (await service.TryStartVodDownloadAsync("999", CancellationToken.None)).Result);
+        var start = await service.TryStartVodDownloadAsync("123", CancellationToken.None);
+
+        Assert.Equal(StartVodDownloadResult.Started, start.Result);
+        Assert.Equal("alpha", start.Channel);
+        var completion = await notifications.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(completion.Succeeded, completion.ErrorMessage);
+        Assert.Equal(RecordingKind.Vod, completion.Kind);
+        Assert.Equal("123", completion.VodId);
+        Assert.False(notifications.Ended.Task.IsCompleted);
+        Assert.Empty(settings.TrackedChannels);
+    }
+
+    [Fact]
+    public async Task ManualRecording_IgnoresPauseAndStopDoesNotPauseChannel()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var settings = CreateSettings(temporaryDirectory.Path);
+        settings.AddPausedChannel("beta");
+        var playback = new ControlledPlaybackClient();
+        playback.EnqueueLive("beta");
+        playback.EnqueuePlaylist("beta", """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:2
+            #EXT-X-MEDIA-SEQUENCE:1
+            #EXTINF:2,live
+            content.ts
+            """);
+        playback.Segments[new Uri("https://video.example/beta/content.ts")] = Encoding.UTF8.GetBytes("media");
+        var notifications = new RecordingNotifications();
+        var saveCount = 0;
+        var service = CreateService(
+            settings,
+            playback,
+            new ControlledMediaToolRunner { DurationSeconds = 2 },
+            notifications,
+            () => saveCount++);
+
+        Assert.Equal(
+            StartDownloadResult.Started,
+            await service.TryStartManualRecordingAsync("beta", CancellationToken.None));
+        var session = Assert.Single(service.GetActiveDownloads());
+        Assert.Equal(RecordingKind.Manual, session.Kind);
+        await playback.SegmentFetched.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        settings.RemovePausedChannel("beta");
+
+        Assert.Equal(StopDownloadResult.Accepted, await service.RequestStopAsync(session.SessionId, CancellationToken.None));
+        var completion = await notifications.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(completion.StoppedManually);
+        Assert.Equal(RecordingKind.Manual, completion.Kind);
+        Assert.False(settings.IsPausedUntilOffline("beta"));
+        Assert.Equal(0, saveCount);
+    }
+
     private static TwitchDownloaderService CreateService(
         AppSettings settings,
         ControlledPlaybackClient playback,
@@ -389,6 +464,15 @@ public sealed class TwitchDownloaderServiceTests
             return resolution is Exception exception
                 ? Task.FromException<TwitchPlaybackResult>(exception)
                 : Task.FromResult((TwitchPlaybackResult)resolution);
+        }
+
+        public ConcurrentDictionary<string, string> VodChannels { get; } = new();
+
+        public Task<TwitchVodResult> ResolveVodAsync(string vodId, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(VodChannels.TryGetValue(vodId, out var channel)
+                ? new TwitchVodResult(TwitchVodStatus.Available, vodId, channel, PlaylistUri($"vod{vodId}"), "source", true)
+                : new TwitchVodResult(TwitchVodStatus.NotFound, vodId, string.Empty, null, string.Empty, false));
         }
 
         public async Task<MediaPlaylistResponse> FetchMediaPlaylistAsync(

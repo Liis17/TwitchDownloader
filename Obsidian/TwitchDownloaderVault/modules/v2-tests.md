@@ -11,16 +11,20 @@ xUnit-проект для серверного контура v2. Проверя
 
 - `TwitchDownloader2.CLI.Tests/TwitchPlaybackClientTests.cs` — source/fallback и HTTP-сценарии.
 - `TwitchDownloader2.CLI.Tests/HlsPlaylistParserTests.cs` — sequence, реклама и `EXT-X-MAP`.
-- `TwitchDownloader2.CLI.Tests/LiveStreamRecorderTests.cs` — dedupe, дыры, retry и token refresh.
+- `TwitchDownloader2.CLI.Tests/LiveStreamRecorderTests.cs` — dedupe, дыры, retry и token refresh;
+  параллельная загрузка VOD с порядком записи и заменой `-unmuted` на `-muted`.
 - `TwitchDownloader2.CLI.Tests/MediaFinalizerTests.cs` — MP4 validation, failed-artifacts и recovery.
 - `TwitchDownloader2.CLI.Tests/TwitchDownloaderServiceTests.cs` — одна recording-сессия на канал,
   мгновенное уведомление естественного конца, параллельная финализация/replacement, отмена,
-  pause, устаревшая кнопка остановки и shutdown/recovery.
+  pause, устаревшая кнопка остановки и shutdown/recovery; загрузка VOD без уведомления о конце
+  эфира; ручная запись игнорирует паузу и не ставит её при остановке.
 - `TwitchDownloader2.CLI.Tests/TwitchCheckerServiceTests.cs` — scheduler и `ForceCheck` без обхода pause.
 - `TwitchDownloader2.CLI.Tests/KeyboardsTests.cs` — callback остановки содержит session ID, а не имя канала;
-  codec callback удаления канала; добавление/удаление вынесены из главного меню в меню каналов.
+  codec callback удаления канала; добавление/удаление вынесены из главного меню в меню каналов;
+  разбор ссылки `⬇️ Загрузить` на VOD и канал.
 - `TwitchDownloader2.CLI.Tests/RecordingHistoryTests.cs` — SQLite-история переживает переоткрытие,
-  сортируется от новых к старым; декоратор сохраняет итог и передаёт уведомление дальше.
+  сортируется от новых к старым, миграция базы без колонок `kind`/`vod_id`; декоратор сохраняет
+  итог и передаёт уведомление дальше.
 - `TwitchDownloader2.CLI.Tests/AppSettingsTests.cs` — сериализация state mutation и persistence.
 
 ## Запуск

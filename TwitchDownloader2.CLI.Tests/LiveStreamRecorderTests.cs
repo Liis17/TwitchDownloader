@@ -151,6 +151,51 @@ public sealed class LiveStreamRecorderTests
         Assert.Equal("firstsecond", await File.ReadAllTextAsync(rawPath));
     }
 
+    [Fact]
+    public async Task DownloadVodAsync_WritesSegmentsInOrderAndFallsBackToMutedSegment()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var playlistUri = new Uri("https://video.example/vod/index-dvr.m3u8");
+        var playbackClient = new FakePlaybackClient(new MediaPlaylistResponse("""
+            #EXTM3U
+            #EXT-X-TARGETDURATION:10
+            #EXT-X-MEDIA-SEQUENCE:0
+            #EXTINF:10,
+            0.ts
+            #EXTINF:10,
+            1-unmuted.ts
+            #EXTINF:10,
+            2.ts
+            #EXTINF:4,
+            3.ts
+            #EXTINF:10,
+            4.ts
+            #EXT-X-ENDLIST
+            """, playlistUri));
+        playbackClient.Segments[new Uri("https://video.example/vod/0.ts")] = Encoding.UTF8.GetBytes("a");
+        playbackClient.Segments[new Uri("https://video.example/vod/1-muted.ts")] = Encoding.UTF8.GetBytes("b");
+        playbackClient.Segments[new Uri("https://video.example/vod/2.ts")] = Encoding.UTF8.GetBytes("c");
+        playbackClient.Segments[new Uri("https://video.example/vod/4.ts")] = Encoding.UTF8.GetBytes("e");
+        var progress = new List<(int Done, int Total)>();
+
+        var rawPath = Path.Combine(temporaryDirectory.Path, "vod.recording");
+        var recorder = new LiveStreamRecorder(playbackClient, new ImmediateDelay());
+        var result = await recorder.DownloadVodAsync(
+            "VOD 1",
+            playlistUri,
+            rawPath,
+            parallelism: 2,
+            (done, total) => progress.Add((done, total)),
+            CancellationToken.None);
+
+        Assert.Equal("abce", await File.ReadAllTextAsync(rawPath));
+        Assert.Equal(RecordingEndReason.EndList, result.EndReason);
+        Assert.Equal(4, result.SegmentCount);
+        Assert.Equal(1, result.GapCount);
+        Assert.Equal(40, result.ContentDurationSeconds);
+        Assert.Equal((5, 5), progress[^1]);
+    }
+
     private sealed class FakePlaybackClient(params object[] playlists) : ITwitchPlaybackClient
     {
         private readonly Queue<object> _playlists = new(playlists);
@@ -165,6 +210,9 @@ public sealed class LiveStreamRecorderTests
             ResolveCount++;
             return Task.FromResult(RefreshResult ?? throw new InvalidOperationException("Playback refresh was not expected."));
         }
+
+        public Task<TwitchVodResult> ResolveVodAsync(string vodId, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("VOD resolution was not expected.");
 
         public Task<MediaPlaylistResponse> FetchMediaPlaylistAsync(Uri playlistUri, CancellationToken cancellationToken)
         {

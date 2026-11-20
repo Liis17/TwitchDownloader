@@ -18,8 +18,10 @@ recording-сессию, при этом финализация предыдущ�
 | Метод | Описание |
 |-------|----------|
 | `TryStartDownloadAsync(channel: string, cancellationToken: CancellationToken): Task<StartDownloadResult>` | Проверяет active recording/pause/live, резервирует канал и возвращает `Started`, `AlreadyActive`, `Offline`, `Suppressed` либо `Failed`. |
-| `RequestStopAsync(sessionId: string, cancellationToken: CancellationToken): Task<StopDownloadResult>` | Сохраняет pause-until-offline, отменяет только указанную запись и сразу возвращает `Accepted`, `AlreadyStopping` либо `NotFound`. Ошибка persistence отклоняет stop исключением. |
-| `GetActiveDownloads(): IReadOnlyList<ActiveDownloadInfo>` | Возвращает session ID, канал, UTC-время старта, путь сырья и состояние `Recording`/`Finalizing`. |
+| `TryStartManualRecordingAsync(channel, cancellationToken): Task<StartDownloadResult>` | Ручная запись: тот же поток, но без проверки паузы до offline; канал не добавляется в отслеживаемые. Резерв канала общий с checker — одна запись эфира на канал. |
+| `TryStartVodDownloadAsync(vodId, cancellationToken): Task<VodDownloadStart>` | Загрузка VOD: `Started`, `AlreadyActive` (этот VOD уже качается), `NotFound` или `Failed` с текстом причины. Сырьё `vod_<channel>_<vodId>_<timestamp>_<sessionId>.recording`; резерв канала не занимает. |
+| `RequestStopAsync(sessionId: string, cancellationToken: CancellationToken): Task<StopDownloadResult>` | Для записи отслеживаемого канала сохраняет pause-until-offline (для ручной записи и VOD — нет), отменяет только указанную запись и сразу возвращает `Accepted`, `AlreadyStopping` либо `NotFound`. Ошибка persistence отклоняет stop исключением. |
+| `GetActiveDownloads(): IReadOnlyList<ActiveDownloadInfo>` | Возвращает session ID, канал, UTC-время старта, путь сырья, состояние `Recording`/`Finalizing`, тип `RecordingKind`, номер VOD и прогресс сегментов VOD. |
 | `StopForShutdownAsync(cancellationToken: CancellationToken): Task` | Отменяет HTTP и media tools, закрывает сырьё и намеренно не запускает/не продолжает финализацию. |
 | `RecoverInterruptedDownloadsAsync(cancellationToken: CancellationToken): Task<IReadOnlyList<MediaFinalizeResult>>` | Перед стартом checker передаёт orphan `.recording` в [[modules/v2-media-recording]]. |
 

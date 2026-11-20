@@ -16,7 +16,6 @@ Parent: [[Index]]
 | `GetChannelsKeyboard(): ReplyKeyboardMarkup` | Reply | Меню каналов: добавить, удалить, вернуться на главную. |
 | `GetDeleteChannelsKeyboard(channels: IEnumerable<string>): InlineKeyboardMarkup` | Inline | Одна кнопка на канал с callback `delete_channel:<channel>`. |
 | `CreateDeleteChannelCallback` / `TryParseDeleteChannelCallback` | string / bool | Единый codec `delete_channel:<channel>`. |
-| `GetDownloadKeyboard(placeholder: string): ReplyKeyboardMarkup` | Reply | Идентична main; задел для download-меню. |
 | `GetOnlyCancelKeyboard(placeholder: string): ReplyKeyboardMarkup` | Reply | Одна кнопка "❌ Отменить действие". |
 | `GetServiceKeyboard(placeholder: string): ReplyKeyboardMarkup` | Reply | Main + Cancel сверху. |
 | `GetSettingsKeyboard(): ReplyKeyboardMarkup` | Reply | Папка, сохранение и возврат. |
@@ -29,7 +28,7 @@ Parent: [[Index]]
 
 ## Важные детали
 - Все клавиатуры — `IsPersistent = true, ResizeKeyboard = true, OneTimeKeyboard = false`.
-- `GetDownloadKeyboard` дублирует `GetMainKeyboard` — задел, но кнопка ⬇️ Загрузить пока не имеет своего меню.
-- `⬇️ Загрузить` показывает копию главного меню (см. [[api/telegram-commands]]).
+- `⬇️ Загрузить` ждёт ссылку под клавиатурой `GetOnlyCancelKeyboard` (см. [[api/telegram-commands]]).
+- Кнопка остановки загрузки VOD подписана номером VOD и каналом.
 - Session ID помещается в callback вместо имени канала; итоговая строка укладывается в лимит Telegram callback data.
   Имя канала (до 25 символов) в `delete_channel:` тоже укладывается в лимит 64 байта.

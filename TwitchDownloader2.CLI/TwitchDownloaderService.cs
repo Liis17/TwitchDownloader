@@ -9,6 +9,29 @@ namespace TwitchDownloader2.CLI
         Failed
     }
 
+    public enum StartVodDownloadResult
+    {
+        Started,
+        AlreadyActive,
+        NotFound,
+        Failed
+    }
+
+    public sealed record VodDownloadStart(StartVodDownloadResult Result, string? Channel, string? ErrorMessage);
+
+    /// <summary>
+    /// Откуда взялась сессия: запись отслеживаемого канала, ручная запись по кнопке «Загрузить»
+    /// или загрузка VOD уже завершённого стрима.
+    /// </summary>
+    public enum RecordingKind
+    {
+        Tracked,
+        Manual,
+        Vod
+    }
+
+    public sealed record DownloadProgress(int SegmentsDone, int SegmentsTotal);
+
     public enum StopDownloadResult
     {
         Accepted,
@@ -27,7 +50,10 @@ namespace TwitchDownloader2.CLI
         string Channel,
         DateTimeOffset StartedAt,
         string Path,
-        ActiveDownloadState State);
+        ActiveDownloadState State,
+        RecordingKind Kind = RecordingKind.Tracked,
+        string? VodId = null,
+        DownloadProgress? Progress = null);
 
     public sealed record RecordingStartedInfo(
         ActiveDownloadInfo Download,
@@ -54,7 +80,9 @@ namespace TwitchDownloader2.CLI
         string? ErrorMessage,
         DateTimeOffset StartedAt,
         DateTimeOffset RecordingEndedAt,
-        bool StoppedManually);
+        bool StoppedManually,
+        RecordingKind Kind = RecordingKind.Tracked,
+        string? VodId = null);
 
     public interface IRecordingNotificationSink
     {
@@ -76,6 +104,8 @@ namespace TwitchDownloader2.CLI
         private static readonly string ServiceName = "TwitchDownloader";
         private static readonly ConsoleColor ConsoleColor = System.ConsoleColor.DarkCyan;
 
+        private const int VodParallelism = 4;
+
         private readonly object _gate = new();
         private readonly AppSettings _settings;
         private readonly ITwitchPlaybackClient _playbackClient;
@@ -94,6 +124,9 @@ namespace TwitchDownloader2.CLI
             public required DateTimeOffset StartedAt { get; init; }
             public required string RawPath { get; init; }
             public required TwitchPlaybackResult Playback { get; init; }
+            public RecordingKind Kind { get; init; } = RecordingKind.Tracked;
+            public string? VodId { get; init; }
+            public DownloadProgress? Progress { get; set; }
             public CancellationTokenSource RecordingCancellation { get; } = new();
             public CancellationTokenSource FinalizationCancellation { get; } = new();
             public ActiveDownloadState State { get; set; } = ActiveDownloadState.Recording;
@@ -138,8 +171,106 @@ namespace TwitchDownloader2.CLI
             _finalizer = new MediaFinalizer(mediaToolRunner, message => ConsoleWriteLine(message));
         }
 
-        public async Task<StartDownloadResult> TryStartDownloadAsync(
+        public Task<StartDownloadResult> TryStartDownloadAsync(
             string channel,
+            CancellationToken cancellationToken)
+        {
+            return StartLiveAsync(channel, RecordingKind.Tracked, cancellationToken);
+        }
+
+        /// <summary>
+        /// Ручная запись текущего эфира по запросу владельца: канал не обязан быть отслеживаемым,
+        /// пауза до offline не мешает явному запросу.
+        /// </summary>
+        public Task<StartDownloadResult> TryStartManualRecordingAsync(
+            string channel,
+            CancellationToken cancellationToken)
+        {
+            return StartLiveAsync(channel, RecordingKind.Manual, cancellationToken);
+        }
+
+        public async Task<VodDownloadStart> TryStartVodDownloadAsync(
+            string vodId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(vodId) || !vodId.All(char.IsAsciiDigit))
+                return new VodDownloadStart(StartVodDownloadResult.NotFound, null, null);
+
+            lock (_gate)
+            {
+                if (_shutdownRequested)
+                    return new VodDownloadStart(StartVodDownloadResult.Failed, null, "Приложение завершается.");
+                if (_sessionsById.Values.Any(session => session.VodId == vodId))
+                    return new VodDownloadStart(StartVodDownloadResult.AlreadyActive, null, null);
+            }
+
+            TwitchVodResult vod;
+            try
+            {
+                vod = await _playbackClient.ResolveVodAsync(vodId, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                ConsoleWriteLine($"Не удалось получить VOD {vodId}: {ex.Message}", System.ConsoleColor.DarkYellow);
+                return new VodDownloadStart(StartVodDownloadResult.Failed, null, ex.Message);
+            }
+
+            if (vod.Status == TwitchVodStatus.NotFound || vod.MediaPlaylistUrl is null)
+                return new VodDownloadStart(StartVodDownloadResult.NotFound, null, null);
+
+            if (!TryGetDownloadRoot(out var downloadRoot))
+                return new VodDownloadStart(StartVodDownloadResult.Failed, vod.Channel, "Не удалось создать папку загрузок.");
+
+            var sessionId = Guid.NewGuid().ToString("N");
+            var startedAt = DateTimeOffset.UtcNow;
+            var channelPart = string.IsNullOrWhiteSpace(vod.Channel) ? "unknown" : vod.Channel;
+            var session = new DownloadSession
+            {
+                SessionId = sessionId,
+                Channel = vod.Channel,
+                StartedAt = startedAt,
+                RawPath = Path.Combine(
+                    downloadRoot,
+                    $"vod_{channelPart}_{vodId}_{startedAt:yyyyMMdd-HHmmss}_{sessionId}.recording"),
+                Playback = new TwitchPlaybackResult(
+                    TwitchPlaybackStatus.Live,
+                    vod.Channel,
+                    vod.MediaPlaylistUrl,
+                    vod.SelectedQuality,
+                    vod.IsSource),
+                Kind = RecordingKind.Vod,
+                VodId = vodId
+            };
+
+            lock (_gate)
+            {
+                if (_shutdownRequested)
+                {
+                    session.Dispose();
+                    return new VodDownloadStart(StartVodDownloadResult.Failed, vod.Channel, "Приложение завершается.");
+                }
+
+                if (_sessionsById.Values.Any(existing => existing.VodId == vodId))
+                {
+                    session.Dispose();
+                    return new VodDownloadStart(StartVodDownloadResult.AlreadyActive, vod.Channel, null);
+                }
+
+                _sessionsById.Add(sessionId, session);
+                session.WorkerTask = RunSessionAsync(session);
+            }
+
+            ConsoleWriteLine($"Загрузка VOD {vodId} канала '{vod.Channel}' запущена (сессия {sessionId}).");
+            return new VodDownloadStart(StartVodDownloadResult.Started, vod.Channel, null);
+        }
+
+        private async Task<StartDownloadResult> StartLiveAsync(
+            string channel,
+            RecordingKind kind,
             CancellationToken cancellationToken)
         {
             string normalizedChannel;
@@ -204,7 +335,7 @@ namespace TwitchDownloader2.CLI
                 return StartDownloadResult.Failed;
             }
 
-            if (_settings.IsPausedUntilOffline(normalizedChannel))
+            if (kind == RecordingKind.Tracked && _settings.IsPausedUntilOffline(normalizedChannel))
                 return StartDownloadResult.Suppressed;
 
             if (!playback.IsSource)
@@ -214,19 +345,8 @@ namespace TwitchDownloader2.CLI
                     System.ConsoleColor.DarkYellow);
             }
 
-            string downloadRoot;
-            try
-            {
-                downloadRoot = string.IsNullOrWhiteSpace(_settings.DownloadPath)
-                    ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads")
-                    : _settings.DownloadPath;
-                Directory.CreateDirectory(downloadRoot);
-            }
-            catch (Exception ex)
-            {
-                ConsoleWriteLine($"Не удалось создать папку загрузок: {ex.Message}", System.ConsoleColor.DarkRed);
+            if (!TryGetDownloadRoot(out var downloadRoot))
                 return StartDownloadResult.Failed;
-            }
 
             var sessionId = Guid.NewGuid().ToString("N");
             var startedAt = DateTimeOffset.UtcNow;
@@ -239,7 +359,8 @@ namespace TwitchDownloader2.CLI
                 Channel = normalizedChannel,
                 StartedAt = startedAt,
                 RawPath = rawPath,
-                Playback = playback
+                Playback = playback,
+                Kind = kind
             };
 
             lock (_gate)
@@ -256,7 +377,7 @@ namespace TwitchDownloader2.CLI
                     return StartDownloadResult.AlreadyActive;
                 }
 
-                if (_settings.IsPausedUntilOffline(normalizedChannel))
+                if (kind == RecordingKind.Tracked && _settings.IsPausedUntilOffline(normalizedChannel))
                 {
                     session.Dispose();
                     return StartDownloadResult.Suppressed;
@@ -289,6 +410,14 @@ namespace TwitchDownloader2.CLI
                     return Task.FromResult(StopDownloadResult.AlreadyStopping);
 
                 session.StopRequested = true;
+            }
+
+            // Пауза до offline нужна только отслеживаемым каналам: ручную запись и VOD никто не перезапускает.
+            if (session.Kind != RecordingKind.Tracked)
+            {
+                CancelSafely(session.RecordingCancellation);
+                ConsoleWriteLine($"Остановка сессии {session.SessionId} для '{session.Channel}' принята.");
+                return Task.FromResult(StopDownloadResult.Accepted);
             }
 
             var pauseAdded = _settings.AddPausedChannel(session.Channel);
@@ -370,14 +499,24 @@ namespace TwitchDownloader2.CLI
             {
                 // The start notification is best-effort and must not delay end/finalization.
                 _ = NotifyStartedSafelyAsync(session);
-                recording = await _recorder.RecordAsync(
-                    session.Channel,
-                    session.Playback.MediaPlaylistUrl!,
-                    session.RawPath,
-                    session.RecordingCancellation.Token);
+                recording = session.Kind == RecordingKind.Vod
+                    ? await _recorder.DownloadVodAsync(
+                        $"VOD {session.VodId}",
+                        session.Playback.MediaPlaylistUrl!,
+                        session.RawPath,
+                        VodParallelism,
+                        (done, total) => UpdateProgress(session, done, total),
+                        session.RecordingCancellation.Token)
+                    : await _recorder.RecordAsync(
+                        session.Channel,
+                        session.Playback.MediaPlaylistUrl!,
+                        session.RawPath,
+                        session.RecordingCancellation.Token);
                 recordingEndedAt = DateTimeOffset.UtcNow;
 
-                var endedNaturally = recording.EndReason is RecordingEndReason.EndList or RecordingEndReason.Offline;
+                // Для VOD эфир уже завершён: уведомление о конце трансляции не отправляется.
+                var endedNaturally = session.Kind != RecordingKind.Vod
+                    && recording.EndReason is RecordingEndReason.EndList or RecordingEndReason.Offline;
 
                 lock (_gate)
                 {
@@ -415,7 +554,9 @@ namespace TwitchDownloader2.CLI
                         recording.ErrorMessage ?? "Запись не содержит ни одного медиа-сегмента.",
                         session.StartedAt,
                         recordingEndedAt.Value,
-                        IsStopRequested(session)),
+                        IsStopRequested(session),
+                        session.Kind,
+                        session.VodId),
                         session.FinalizationCancellation.Token);
                     return;
                 }
@@ -453,7 +594,9 @@ namespace TwitchDownloader2.CLI
                     finalized.ErrorMessage ?? recording.ErrorMessage,
                     session.StartedAt,
                     recordingEndedAt.Value,
-                    IsStopRequested(session)),
+                    IsStopRequested(session),
+                    session.Kind,
+                    session.VodId),
                     session.FinalizationCancellation.Token);
             }
             catch (OperationCanceledException) when (IsShutdown(session))
@@ -482,7 +625,9 @@ namespace TwitchDownloader2.CLI
                         ex.Message,
                         session.StartedAt,
                         recordingEndedAt ?? DateTimeOffset.UtcNow,
-                        IsStopRequested(session)),
+                        IsStopRequested(session),
+                        session.Kind,
+                        session.VodId),
                         CancellationToken.None);
                 }
             }
@@ -576,6 +721,29 @@ namespace TwitchDownloader2.CLI
                 return session.SkipFinalization || _shutdownRequested;
         }
 
+        private void UpdateProgress(DownloadSession session, int done, int total)
+        {
+            lock (_gate)
+                session.Progress = new DownloadProgress(done, total);
+        }
+
+        private bool TryGetDownloadRoot(out string downloadRoot)
+        {
+            downloadRoot = string.IsNullOrWhiteSpace(_settings.DownloadPath)
+                ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads")
+                : _settings.DownloadPath;
+            try
+            {
+                Directory.CreateDirectory(downloadRoot);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                ConsoleWriteLine($"Не удалось создать папку загрузок: {ex.Message}", System.ConsoleColor.DarkRed);
+                return false;
+            }
+        }
+
         private bool IsStopRequested(DownloadSession session)
         {
             lock (_gate)
@@ -589,7 +757,10 @@ namespace TwitchDownloader2.CLI
                 session.Channel,
                 session.StartedAt,
                 session.RawPath,
-                session.State);
+                session.State,
+                session.Kind,
+                session.VodId,
+                session.Progress);
         }
 
         private static void CancelSafely(CancellationTokenSource cancellation)

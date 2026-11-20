@@ -20,6 +20,7 @@ Parent: [[Index]]
 | Метод | Описание |
 |-------|----------|
 | `RecordAsync(channel: string, initialPlaylistUri: Uri, rawPath: string, cancellationToken: CancellationToken): Task<LiveRecordingResult>` | Дедуплицирует sequence, считает дыры/рекламу и пишет MPEG-TS либо fMP4. |
+| `DownloadVodAsync(label, playlistUri, rawPath, parallelism, progress, cancellationToken): Task<LiveRecordingResult>` | Загрузка VOD: читает плейлист один раз, качает до `parallelism` сегментов одновременно и пишет их в сырьё строго по порядку; `-unmuted`-сегмент при отказе заменяется `-muted`; недокачанный сегмент считается дырой. |
 | `FinalizeAsync(rawPath: string, expectedDurationSeconds: double, container: RecordingContainer, cancellationToken: CancellationToken): Task<MediaFinalizeResult>` | Создаёт `.mp4.part`, синхронизирует аудио, проверяет и атомарно публикует `.mp4`. |
 | `RecoverOrphansAsync(directory: string, cancellationToken: CancellationToken): Task<IReadOnlyList<MediaFinalizeResult>>` | Определяет контейнер и duration каждого `*.recording`, затем финализирует. |
 | `RunAsync(executable: string, arguments: IReadOnlyList<string>, cancellationToken: CancellationToken): Task<MediaToolResult>` | Запускает media tool без shell и уничтожает дерево процесса при отмене. |

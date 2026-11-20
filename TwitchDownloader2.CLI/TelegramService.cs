@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
@@ -7,7 +8,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 
 namespace TwitchDownloader2.CLI
 {
-    public sealed class TelegramService : IRecordingNotificationSink
+    public sealed partial class TelegramService : IRecordingNotificationSink
     {
         private readonly TelegramBotClient _bot;
         private readonly long _ownerId;
@@ -17,6 +18,7 @@ namespace TwitchDownloader2.CLI
         private const int HistoryPageSize = 10;
 
         private bool _addChannelTrigger;
+        private bool _downloadTrigger;
         private bool _editDownloadPathTrigger;
 
         public TelegramService(string token, long ownerId)
@@ -111,6 +113,13 @@ namespace TwitchDownloader2.CLI
                 return;
             }
 
+            if (_downloadTrigger)
+            {
+                DisableTriggers();
+                await StartDownloadFromLinkAsync(text, cancellationToken);
+                return;
+            }
+
             if (_editDownloadPathTrigger)
             {
                 DisableTriggers();
@@ -194,11 +203,26 @@ namespace TwitchDownloader2.CLI
                     var statuses = Program.TwitchChecker.GetStatuses();
                     var statusText = "---- Статус отслеживаемых каналов ----\n\n";
                     statusText += string.Join('\n', statuses.Select(item => $"{(item.Value ? "🔴" : "💤")} {Html(item.Key)}"));
+                    var otherDownloads = Program.TwitchDownloader.GetActiveDownloads()
+                        .Where(download => download.Kind != RecordingKind.Tracked)
+                        .ToArray();
+                    if (otherDownloads.Length > 0)
+                    {
+                        statusText += "\n\n---- Ручные записи и загрузки VOD ----\n\n" +
+                                      string.Join('\n', otherDownloads.Select(FormatActiveDownload));
+                    }
                     await SendMessageAsync(statusText, Keyboards.GetMainKeyboard(), cancellationToken);
                     return;
 
                 case "⬇️ Загрузить":
-                    await SendMessageAsync("Выберите опцию:", Keyboards.GetDownloadKeyboard(), cancellationToken);
+                    DisableTriggers();
+                    _downloadTrigger = true;
+                    await SendMessageAsync(
+                        "Пришли ссылку:\n" +
+                        "• на канал, который сейчас в эфире, — начнётся ручная запись (канал не добавляется в отслеживаемые);\n" +
+                        "• на завершённый стрим <code>twitch.tv/videos/…</code> — начнётся загрузка VOD.",
+                        Keyboards.GetOnlyCancelKeyboard("Ссылка на канал или VOD"),
+                        cancellationToken);
                     return;
 
                 case "⚙ Настройки":
@@ -323,6 +347,82 @@ namespace TwitchDownloader2.CLI
             await bot.AnswerCallbackQuery(callback.Id, cancellationToken: cancellationToken);
         }
 
+        private async Task StartDownloadFromLinkAsync(string text, CancellationToken cancellationToken)
+        {
+            if (!TryParseDownloadTarget(text, out var isVod, out var target))
+            {
+                await SendMessageAsync(
+                    "⚠️ Не понял ссылку. Нужна ссылка на канал Twitch или на VOD <code>twitch.tv/videos/…</code>",
+                    Keyboards.GetMainKeyboard(),
+                    cancellationToken);
+                return;
+            }
+
+            string reply;
+            if (isVod)
+            {
+                var start = await Program.TwitchDownloader.TryStartVodDownloadAsync(target, cancellationToken);
+                reply = start.Result switch
+                {
+                    StartVodDownloadResult.Started => $"⬇️ Загрузка VOD <b>{Html(target)}</b> канала <b>{Html(start.Channel)}</b> принята.",
+                    StartVodDownloadResult.AlreadyActive => $"ℹ️ VOD <b>{Html(target)}</b> уже загружается.",
+                    StartVodDownloadResult.NotFound => $"⚠️ VOD <b>{Html(target)}</b> не найден или удалён.",
+                    _ => $"❌ Не удалось начать загрузку VOD <b>{Html(target)}</b>: {Html(start.ErrorMessage ?? "неизвестная ошибка")}"
+                };
+            }
+            else
+            {
+                var result = await Program.TwitchDownloader.TryStartManualRecordingAsync(target, cancellationToken);
+                reply = result switch
+                {
+                    StartDownloadResult.Started => $"⬇️ Ручная запись <b>{Html(target)}</b> принята.",
+                    StartDownloadResult.AlreadyActive => $"ℹ️ Эфир <b>{Html(target)}</b> уже записывается.",
+                    StartDownloadResult.Offline => $"💤 Канал <b>{Html(target)}</b> сейчас не в эфире. Для завершённого стрима пришли ссылку на VOD.",
+                    _ => $"❌ Не удалось начать запись <b>{Html(target)}</b>, подробности в логе."
+                };
+            }
+
+            await SendMessageAsync(reply, Keyboards.GetMainKeyboard(), cancellationToken);
+        }
+
+        /// <summary>
+        /// Разбирает ввод для «⬇️ Загрузить»: ссылку на VOD (<c>/videos/123</c>, <c>/channel/video/123</c>
+        /// или просто номер) либо имя/ссылку канала.
+        /// </summary>
+        internal static bool TryParseDownloadTarget(string text, out bool isVod, out string target)
+        {
+            var input = text.Trim();
+            var vodMatch = VodLinkRegex().Match(input);
+            if (vodMatch.Success || input.All(char.IsAsciiDigit) && input.Length > 0)
+            {
+                isVod = true;
+                target = vodMatch.Success ? vodMatch.Groups[1].Value : input;
+                return true;
+            }
+
+            isVod = false;
+            target = ExtractChannelName(input.Replace(" ", string.Empty).ToLowerInvariant());
+            return target.Length is >= 3 and <= 25
+                && target.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
+        }
+
+        [GeneratedRegex(@"(?:^|/)videos?/(\d+)", RegexOptions.CultureInvariant)]
+        private static partial Regex VodLinkRegex();
+
+        private static string FormatActiveDownload(ActiveDownloadInfo download)
+        {
+            var state = download.State == ActiveDownloadState.Finalizing ? "сборка MP4" : "идёт";
+            if (download.Kind == RecordingKind.Vod)
+            {
+                var progress = download.Progress is { SegmentsTotal: > 0 } value
+                    ? $" · {value.SegmentsDone * 100 / value.SegmentsTotal}% ({value.SegmentsDone}/{value.SegmentsTotal})"
+                    : string.Empty;
+                return $"📼 VOD {Html(download.VodId)} · {Html(download.Channel)} · {state}{progress}";
+            }
+
+            return $"🔴 {Html(download.Channel)} · ручная запись · {state}";
+        }
+
         private async Task HandleDeleteChannelCallbackAsync(
             ITelegramBotClient bot,
             CallbackQuery callback,
@@ -410,15 +510,22 @@ namespace TwitchDownloader2.CLI
             var startedAt = entry.StartedAt.ToLocalTime();
             var endedAt = entry.RecordingEndedAt.ToLocalTime();
             var endDate = endedAt.Date == startedAt.Date ? string.Empty : $"{endedAt:dd.MM.yyyy} ";
+            var isVod = entry.Kind == RecordingKind.Vod;
             var status = entry.Succeeded
-                ? entry.StoppedManually ? "⛔ остановлена вручную" : "✅ завершена"
+                ? entry.StoppedManually ? "⛔ остановлена вручную" : isVod ? "✅ загружена" : "✅ завершена"
                 : "⚠️ ошибка";
+            var subject = entry.Kind switch
+            {
+                RecordingKind.Vod => $"📼 VOD {Html(entry.VodId)} · <b>{Html(entry.Channel)}</b>",
+                RecordingKind.Manual => $"🎥 <b>{Html(entry.Channel)}</b> · ручная запись",
+                _ => $"🎥 <b>{Html(entry.Channel)}</b>"
+            };
             var file = entry.Succeeded && entry.OutputPath is not null
                 ? $"\n📂 <code>{Html(entry.OutputPath)}</code>"
                 : $"\nПричина: {Html(Truncate(entry.ErrorMessage ?? "неизвестная ошибка", 200))}";
-            return $"🎥 <b>{Html(entry.Channel)}</b> · {status}\n" +
-                   $"📅 {startedAt:dd.MM.yyyy} · {startedAt:HH:mm} – {endDate}{endedAt:HH:mm}\n" +
-                   $"🕓 Общая длительность: <b>{FormatDuration((entry.RecordingEndedAt - entry.StartedAt).TotalSeconds)}</b>" +
+            return $"{subject} · {status}\n" +
+                   $"📅 {startedAt:dd.MM.yyyy} · {(isVod ? "загрузка " : string.Empty)}{startedAt:HH:mm} – {endDate}{endedAt:HH:mm}\n" +
+                   $"🕓 {(isVod ? "Скачивалось" : "Общая длительность")}: <b>{FormatDuration((entry.RecordingEndedAt - entry.StartedAt).TotalSeconds)}</b>" +
                    $" · видео: <b>{FormatDuration(entry.DurationSeconds)}</b>\n" +
                    $"💾 {FormatSize(entry.SizeBytes)} · 📢 реклама: {entry.AdvertisementCount} · 🕳 дыр: {entry.GapCount}" +
                    file;
@@ -430,9 +537,18 @@ namespace TwitchDownloader2.CLI
             var fallback = info.IsSource
                 ? string.Empty
                 : "\n⚠️ Source недоступен, выбран первый вариант.";
+            var header = info.Download.Kind switch
+            {
+                // У VOD Twitch часто не помечает Source отдельно; первым идёт лучшее доступное качество.
+                RecordingKind.Vod => $"📼 Загрузка VOD <b>{Html(info.Download.VodId)}</b> канала <b>{Html(info.Download.Channel)}</b> началась!\n\n" +
+                                     $"⬇️ Качество: <b>{quality}</b>",
+                RecordingKind.Manual => $"✨ Ручная запись <b>{Html(info.Download.Channel)}</b> началась!\n\n" +
+                                        $"⬇️ Качество: <b>{quality}</b>{fallback}",
+                _ => $"✨ У <b>{Html(info.Download.Channel)}</b> началась трансляция!\n\n" +
+                     $"⬇️ Запись запущена · качество: <b>{quality}</b>{fallback}"
+            };
             return SendMessageAsync(
-                $"✨ У <b>{Html(info.Download.Channel)}</b> началась трансляция!\n\n" +
-                $"⬇️ Запись запущена · качество: <b>{quality}</b>{fallback}\n\n" +
+                header + "\n\n" +
                 $"📂 Сырьё: <code>{Html(info.Download.Path)}</code>",
                 cancellationToken: cancellationToken);
         }
@@ -454,7 +570,7 @@ namespace TwitchDownloader2.CLI
             if (info.Succeeded && info.OutputPath is not null)
             {
                 return SendMessageAsync(
-                    $"✅ Обработка записи для <b>{Html(info.Channel)}</b> завершена. MP4 готов.\n\n" +
+                    $"✅ {CompletionSubject(info)} завершена. MP4 готов.\n\n" +
                     $"📂 <code>{Html(info.OutputPath)}</code>\n" +
                     $"⏱ Длительность: <b>{FormatDuration(info.DurationSeconds)}</b>\n" +
                     $"💾 Размер: <b>{FormatSize(info.SizeBytes)}</b>\n" +
@@ -467,7 +583,7 @@ namespace TwitchDownloader2.CLI
                 ? string.Empty
                 : $"\nКандидат MP4: <code>{Html(info.OutputPath)}</code>";
             return SendMessageAsync(
-                $"⚠️ Обработка записи для <b>{Html(info.Channel)}</b> завершена с ошибкой.\n" +
+                $"⚠️ {CompletionSubject(info)} завершена с ошибкой.\n" +
                 $"Проверенный MP4 не собран.\n" +
                 $"Сырьё сохранено: <code>{Html(info.RawPath)}</code>{candidate}\n" +
                 $"⏱ Длительность: <b>{FormatDuration(info.DurationSeconds)}</b>\n" +
@@ -477,6 +593,11 @@ namespace TwitchDownloader2.CLI
                 $"Причина: {Html(info.ErrorMessage ?? "неизвестная ошибка")}",
                 cancellationToken: cancellationToken);
         }
+
+        private static string CompletionSubject(RecordingCompletionInfo info) =>
+            info.Kind == RecordingKind.Vod
+                ? $"Загрузка VOD <b>{Html(info.VodId)}</b> канала <b>{Html(info.Channel)}</b>"
+                : $"Обработка записи для <b>{Html(info.Channel)}</b>";
 
         public async Task SendMessageAsync(
             string text,
@@ -521,6 +642,7 @@ namespace TwitchDownloader2.CLI
         private void DisableTriggers()
         {
             _addChannelTrigger = false;
+            _downloadTrigger = false;
             _editDownloadPathTrigger = false;
         }
 

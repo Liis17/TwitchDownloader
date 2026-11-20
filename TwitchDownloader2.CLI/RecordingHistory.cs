@@ -18,7 +18,9 @@ namespace TwitchDownloader2.CLI
         int AdvertisementCount,
         double AdvertisementDurationSeconds,
         int GapCount,
-        string? ErrorMessage);
+        string? ErrorMessage,
+        RecordingKind Kind,
+        string? VodId);
 
     /// <summary>
     /// История записей в локальной SQLite-базе: одна строка на завершённую запись.
@@ -64,11 +66,40 @@ namespace TwitchDownloader2.CLI
                         advertisement_count INTEGER NOT NULL,
                         advertisement_duration_seconds REAL NOT NULL,
                         gap_count INTEGER NOT NULL,
-                        error_message TEXT NULL
+                        error_message TEXT NULL,
+                        kind TEXT NOT NULL DEFAULT 'Tracked',
+                        vod_id TEXT NULL
                     );
                     CREATE INDEX IF NOT EXISTS ix_recordings_started_at ON recordings (started_at);
                     """;
                 command.ExecuteNonQuery();
+                AddMissingColumns(connection);
+            }
+        }
+
+        // База, созданная до появления ручной записи и загрузки VOD, получает новые колонки без потери строк.
+        private static void AddMissingColumns(SqliteConnection connection)
+        {
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var info = connection.CreateCommand())
+            {
+                info.CommandText = "PRAGMA table_info(recordings);";
+                using var reader = info.ExecuteReader();
+                while (reader.Read())
+                    columns.Add(reader.GetString(1));
+            }
+
+            foreach (var (name, definition) in new[]
+            {
+                ("kind", "TEXT NOT NULL DEFAULT 'Tracked'"),
+                ("vod_id", "TEXT NULL")
+            })
+            {
+                if (columns.Contains(name))
+                    continue;
+                using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE recordings ADD COLUMN {name} {definition};";
+                alter.ExecuteNonQuery();
             }
         }
 
@@ -82,11 +113,12 @@ namespace TwitchDownloader2.CLI
                     INSERT OR REPLACE INTO recordings (
                         session_id, channel, started_at, recording_ended_at, completed_at,
                         succeeded, stopped_manually, duration_seconds, size_bytes, raw_path, output_path,
-                        advertisement_count, advertisement_duration_seconds, gap_count, error_message)
+                        advertisement_count, advertisement_duration_seconds, gap_count, error_message,
+                        kind, vod_id)
                     VALUES (
                         $sessionId, $channel, $startedAt, $recordingEndedAt, $completedAt,
                         $succeeded, $stoppedManually, $duration, $size, $rawPath, $outputPath,
-                        $adCount, $adDuration, $gapCount, $error);
+                        $adCount, $adDuration, $gapCount, $error, $kind, $vodId);
                     """;
                 command.Parameters.AddWithValue("$sessionId", info.SessionId);
                 command.Parameters.AddWithValue("$channel", info.Channel);
@@ -103,6 +135,8 @@ namespace TwitchDownloader2.CLI
                 command.Parameters.AddWithValue("$adDuration", info.AdvertisementDurationSeconds);
                 command.Parameters.AddWithValue("$gapCount", info.GapCount);
                 command.Parameters.AddWithValue("$error", (object?)info.ErrorMessage ?? DBNull.Value);
+                command.Parameters.AddWithValue("$kind", info.Kind.ToString());
+                command.Parameters.AddWithValue("$vodId", (object?)info.VodId ?? DBNull.Value);
                 command.ExecuteNonQuery();
             }
         }
@@ -116,7 +150,8 @@ namespace TwitchDownloader2.CLI
                 command.CommandText = """
                     SELECT session_id, channel, started_at, recording_ended_at, completed_at,
                            succeeded, stopped_manually, duration_seconds, size_bytes, raw_path, output_path,
-                           advertisement_count, advertisement_duration_seconds, gap_count, error_message
+                           advertisement_count, advertisement_duration_seconds, gap_count, error_message,
+                           kind, vod_id
                     FROM recordings
                     ORDER BY started_at DESC
                     LIMIT $limit;
@@ -142,7 +177,9 @@ namespace TwitchDownloader2.CLI
                         reader.GetInt32(11),
                         reader.GetDouble(12),
                         reader.GetInt32(13),
-                        reader.IsDBNull(14) ? null : reader.GetString(14)));
+                        reader.IsDBNull(14) ? null : reader.GetString(14),
+                        Enum.TryParse<RecordingKind>(reader.GetString(15), out var kind) ? kind : RecordingKind.Tracked,
+                        reader.IsDBNull(16) ? null : reader.GetString(16)));
                 }
                 return entries;
             }

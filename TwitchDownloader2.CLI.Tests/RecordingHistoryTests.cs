@@ -43,6 +43,39 @@ public sealed class RecordingHistoryTests : IDisposable
     }
 
     [Fact]
+    public void Store_MigratesDatabaseCreatedBeforeVodSupport()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
+        using (var connection = new SqliteConnection($"Data Source={DatabasePath};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE recordings (
+                    session_id TEXT PRIMARY KEY, channel TEXT NOT NULL, started_at TEXT NOT NULL,
+                    recording_ended_at TEXT NOT NULL, completed_at TEXT NOT NULL, succeeded INTEGER NOT NULL,
+                    stopped_manually INTEGER NOT NULL, duration_seconds REAL NOT NULL, size_bytes INTEGER NOT NULL,
+                    raw_path TEXT NOT NULL, output_path TEXT NULL, advertisement_count INTEGER NOT NULL,
+                    advertisement_duration_seconds REAL NOT NULL, gap_count INTEGER NOT NULL, error_message TEXT NULL);
+                INSERT INTO recordings VALUES ('old', 'alpha', '2026-11-01T10:00:00.0000000Z', '2026-11-01T12:00:00.0000000Z',
+                    '2026-11-01T12:05:00.0000000Z', 1, 0, 7200, 10, '/r', '/o.mp4', 0, 0, 0, NULL);
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        var store = new RecordingHistoryStore(DatabasePath);
+        store.Add(
+            CreateCompletion("vod", "beta", DateTimeOffset.UtcNow, succeeded: true) with { Kind = RecordingKind.Vod, VodId = "42" },
+            DateTimeOffset.UtcNow);
+
+        var entries = store.GetRecent(10);
+        Assert.Equal(RecordingKind.Tracked, Assert.Single(entries, entry => entry.SessionId == "old").Kind);
+        var vod = Assert.Single(entries, entry => entry.SessionId == "vod");
+        Assert.Equal(RecordingKind.Vod, vod.Kind);
+        Assert.Equal("42", vod.VodId);
+    }
+
+    [Fact]
     public async Task Sink_SavesCompletionAndForwardsNotification()
     {
         var store = new RecordingHistoryStore(DatabasePath);

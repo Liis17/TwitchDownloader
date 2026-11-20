@@ -28,22 +28,6 @@ namespace TwitchDownloader2.CLI
                 OneTimeKeyboard = false
             };
         }
-        public static ReplyKeyboardMarkup GetDownloadKeyboard(string placeholder = "Используй кнопки ниже")
-        {
-            return new ReplyKeyboardMarkup(new[]
-            {
-                new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
-                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись" },
-                new KeyboardButton[] { "🏠 Главная", "⚙ Настройки" },
-                new KeyboardButton[] { "🔁 Принудительно обновить" }
-            })
-            {
-                InputFieldPlaceholder = placeholder,
-                IsPersistent = true,
-                ResizeKeyboard = true,
-                OneTimeKeyboard = false
-            };
-        }
         public static ReplyKeyboardMarkup GetOnlyCancelKeyboard(string placeholder = "Введи это сюда")
         {
             return new ReplyKeyboardMarkup(new[]
@@ -140,7 +124,9 @@ namespace TwitchDownloader2.CLI
             var rows = downloads.Select(download => new[]
             {
                 InlineKeyboardButton.WithCallbackData(
-                    $"⛔ {download.Channel} · {download.State}",
+                    download.Kind == RecordingKind.Vod
+                        ? $"⛔ VOD {download.VodId} · {download.Channel} · {download.State}"
+                        : $"⛔ {download.Channel} · {download.State}",
                     CreateStopDownloadCallback(download.SessionId))
             });
             return new InlineKeyboardMarkup(rows);

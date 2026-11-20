@@ -18,6 +18,7 @@ Parent: [[Index]]
 | Метод | Описание |
 |-------|----------|
 | `ResolveLiveAsync(channel: string, cancellationToken: CancellationToken): Task<TwitchPlaybackResult>` | Получает live playback-токен, выбирает source или первый доступный вариант и различает live/offline. |
+| `ResolveVodAsync(vodId: string, cancellationToken: CancellationToken): Task<TwitchVodResult>` | GQL `video.owner.login` + `videoPlaybackAccessToken` → Usher `/vod/<id>.m3u8`; выбирает `chunked` или первый (лучший) вариант. Нет VOD → `NotFound`, 403 (например, только для подписчиков) → исключение. У VOD Twitch часто не выделяет Source, первым идёт лучшее качество. |
 | `FetchMediaPlaylistAsync(playlistUri: Uri, cancellationToken: CancellationToken): Task<MediaPlaylistResponse>` | Загружает media playlist с 15-секундным таймаутом. |
 | `FetchSegmentAsync(segmentUri: Uri, cancellationToken: CancellationToken): Task<byte[]?>` | Загружает сегмент с 30-секундным таймаутом и четырьмя попытками. |
 | `ParseMaster(text: string, playlistUri: Uri): HlsMasterPlaylist` | Разбирает варианты качества и разрешает относительные URI. |

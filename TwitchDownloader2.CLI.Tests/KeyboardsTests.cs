@@ -36,8 +36,30 @@ public sealed class KeyboardsTests
         Assert.Equal(2, callbacks.Length);
         Assert.True(Keyboards.TryParseDeleteChannelCallback(callbacks[1], out var channel));
         Assert.Equal("beta_2", channel);
-        Assert.False(Keyboards.TryParseDeleteChannelCallback(callbacks[1].Replace("delete_channel:", "stop_download:"), out _));
+        Assert.False(Keyboards.TryParseDeleteChannelCallback(callbacks[1]!.Replace("delete_channel:", "stop_download:"), out _));
         Assert.False(Keyboards.TryParseDeleteChannelCallback("delete_channel:", out _));
+    }
+
+    [Theory]
+    [InlineData("https://www.twitch.tv/videos/2345678901?t=1h2m", true, "2345678901")]
+    [InlineData("twitch.tv/somechannel/video/42", true, "42")]
+    [InlineData("2345678901", true, "2345678901")]
+    [InlineData("https://www.twitch.tv/Some_Channel", false, "some_channel")]
+    [InlineData("somechannel", false, "somechannel")]
+    public void TryParseDownloadTarget_DistinguishesVodAndChannel(string input, bool expectedVod, string expectedTarget)
+    {
+        Assert.True(TelegramService.TryParseDownloadTarget(input, out var isVod, out var target));
+        Assert.Equal(expectedVod, isVod);
+        Assert.Equal(expectedTarget, target);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("https://www.twitch.tv/")]
+    [InlineData("привет мир")]
+    public void TryParseDownloadTarget_RejectsGarbage(string input)
+    {
+        Assert.False(TelegramService.TryParseDownloadTarget(input, out _, out _));
     }
 
     [Fact]

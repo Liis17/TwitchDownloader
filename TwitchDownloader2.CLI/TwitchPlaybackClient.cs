@@ -17,11 +17,26 @@ namespace TwitchDownloader2.CLI
         string SelectedQuality,
         bool IsSource);
 
+    public enum TwitchVodStatus
+    {
+        Available,
+        NotFound
+    }
+
+    public sealed record TwitchVodResult(
+        TwitchVodStatus Status,
+        string VodId,
+        string Channel,
+        Uri? MediaPlaylistUrl,
+        string SelectedQuality,
+        bool IsSource);
+
     public sealed record MediaPlaylistResponse(string Content, Uri PlaylistUri);
 
     public interface ITwitchPlaybackClient
     {
         Task<TwitchPlaybackResult> ResolveLiveAsync(string channel, CancellationToken cancellationToken);
+        Task<TwitchVodResult> ResolveVodAsync(string vodId, CancellationToken cancellationToken);
         Task<MediaPlaylistResponse> FetchMediaPlaylistAsync(Uri playlistUri, CancellationToken cancellationToken);
         Task<byte[]?> FetchSegmentAsync(Uri segmentUri, CancellationToken cancellationToken);
     }
@@ -29,6 +44,7 @@ namespace TwitchDownloader2.CLI
     public sealed class TwitchPlaybackClient : ITwitchPlaybackClient
     {
         private const string ClientId = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+        private const string VideoOwnerQuery = "query VideoOwner($id: ID!) { video(id: $id) { owner { login } } }";
         private const string PlaybackQuery = "query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) @include(if: $isLive) { value signature } videoPlaybackAccessToken(id: $vodID, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) @include(if: $isVod) { value signature } }";
         private static readonly TimeSpan PlaylistTimeout = TimeSpan.FromSeconds(15);
         private static readonly TimeSpan SegmentTimeout = TimeSpan.FromSeconds(30);
@@ -50,7 +66,7 @@ namespace TwitchDownloader2.CLI
         public async Task<TwitchPlaybackResult> ResolveLiveAsync(string channel, CancellationToken cancellationToken)
         {
             channel = NormalizeChannel(channel);
-            var token = await GetPlaybackTokenAsync(channel, cancellationToken);
+            var token = await GetPlaybackTokenAsync(channel, null, cancellationToken);
             if (token is null)
                 return Offline(channel);
 
@@ -77,6 +93,45 @@ namespace TwitchDownloader2.CLI
                 selected.Uri,
                 string.IsNullOrWhiteSpace(selected.Name) ? selected.Group : selected.Name,
                 isSource);
+        }
+
+        public async Task<TwitchVodResult> ResolveVodAsync(string vodId, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(vodId) || !vodId.All(char.IsAsciiDigit))
+                throw new ArgumentException("Twitch VOD id must contain digits only.", nameof(vodId));
+
+            var owner = await GetVideoOwnerAsync(vodId, cancellationToken);
+            if (owner is null)
+                return VodNotFound(vodId);
+
+            var token = await GetPlaybackTokenAsync(string.Empty, vodId, cancellationToken);
+            if (token is null)
+                return VodNotFound(vodId);
+
+            var masterUri = BuildVodPlaylistUri(vodId, token.Value.Value, token.Value.Signature);
+            using var request = new HttpRequestMessage(HttpMethod.Get, masterUri);
+            using var response = await SendAsync(request, PlaylistTimeout, cancellationToken);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return VodNotFound(vodId);
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+                throw new UnauthorizedAccessException("Twitch запретил доступ к VOD (например, только для подписчиков).");
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"Twitch Usher returned HTTP {(int)response.StatusCode}: {TrimForLog(body)}");
+
+            var master = HlsPlaylistParser.ParseMaster(body, response.RequestMessage?.RequestUri ?? masterUri);
+            if (master.Variants.Count == 0)
+                throw new InvalidDataException("Twitch VOD playlist contains no variants.");
+
+            var selected = master.Variants.FirstOrDefault(IsSourceVariant) ?? master.Variants[0];
+            return new TwitchVodResult(
+                TwitchVodStatus.Available,
+                vodId,
+                owner,
+                selected.Uri,
+                string.IsNullOrWhiteSpace(selected.Name) ? selected.Group : selected.Name,
+                IsSourceVariant(selected));
         }
 
         public async Task<MediaPlaylistResponse> FetchMediaPlaylistAsync(Uri playlistUri, CancellationToken cancellationToken)
@@ -117,24 +172,27 @@ namespace TwitchDownloader2.CLI
             return null;
         }
 
-        private async Task<(string Value, string Signature)?> GetPlaybackTokenAsync(
-            string channel,
-            CancellationToken cancellationToken)
+        private async Task<string?> GetVideoOwnerAsync(string vodId, CancellationToken cancellationToken)
         {
-            var payload = JsonSerializer.Serialize(new
+            using var json = await PostGqlAsync(
+                new { operationName = "VideoOwner", variables = new { id = vodId }, query = VideoOwnerQuery },
+                cancellationToken);
+            if (!json.RootElement.TryGetProperty("data", out var data)
+                || !data.TryGetProperty("video", out var video)
+                || video.ValueKind != JsonValueKind.Object
+                || !video.TryGetProperty("owner", out var owner)
+                || owner.ValueKind != JsonValueKind.Object)
             {
-                operationName = "PlaybackAccessToken_Template",
-                variables = new
-                {
-                    login = channel,
-                    isLive = true,
-                    isVod = false,
-                    vodID = string.Empty,
-                    playerType = "site"
-                },
-                query = PlaybackQuery
-            });
+                return null;
+            }
 
+            var login = owner.GetProperty("login").GetString();
+            return string.IsNullOrWhiteSpace(login) ? null : login.ToLowerInvariant();
+        }
+
+        private async Task<JsonDocument> PostGqlAsync(object payloadObject, CancellationToken cancellationToken)
+        {
+            var payload = JsonSerializer.Serialize(payloadObject);
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql")
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
@@ -146,12 +204,39 @@ namespace TwitchDownloader2.CLI
             if (!response.IsSuccessStatusCode)
                 throw new HttpRequestException($"Twitch GQL returned HTTP {(int)response.StatusCode}: {TrimForLog(body)}");
 
-            using var json = JsonDocument.Parse(body);
+            var json = JsonDocument.Parse(body);
             if (json.RootElement.TryGetProperty("errors", out var errors))
-                throw new InvalidDataException($"Twitch GQL error: {TrimForLog(errors.GetRawText())}");
+            {
+                var message = TrimForLog(errors.GetRawText());
+                json.Dispose();
+                throw new InvalidDataException($"Twitch GQL error: {message}");
+            }
+            return json;
+        }
 
+        private async Task<(string Value, string Signature)?> GetPlaybackTokenAsync(
+            string channel,
+            string? vodId,
+            CancellationToken cancellationToken)
+        {
+            var isVod = vodId is not null;
+            using var json = await PostGqlAsync(new
+            {
+                operationName = "PlaybackAccessToken_Template",
+                variables = new
+                {
+                    login = channel,
+                    isLive = !isVod,
+                    isVod,
+                    vodID = vodId ?? string.Empty,
+                    playerType = "site"
+                },
+                query = PlaybackQuery
+            }, cancellationToken);
+
+            var tokenProperty = isVod ? "videoPlaybackAccessToken" : "streamPlaybackAccessToken";
             if (!json.RootElement.TryGetProperty("data", out var data)
-                || !data.TryGetProperty("streamPlaybackAccessToken", out var tokenElement)
+                || !data.TryGetProperty(tokenProperty, out var tokenElement)
                 || tokenElement.ValueKind == JsonValueKind.Null)
             {
                 return null;
@@ -215,6 +300,32 @@ namespace TwitchDownloader2.CLI
             var query = string.Join('&', parameters.Select(pair =>
                 $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
             return new Uri($"https://usher.ttvnw.net/api/channel/hls/{channel}.m3u8?{query}");
+        }
+
+        private static Uri BuildVodPlaylistUri(string vodId, string token, string signature)
+        {
+            var parameters = new Dictionary<string, string>
+            {
+                ["token"] = token,
+                ["sig"] = signature,
+                ["nauth"] = token,
+                ["nauthsig"] = signature,
+                ["allow_source"] = "true",
+                ["allow_audio_only"] = "true",
+                ["player"] = "twitchweb",
+                ["player_backend"] = "mediaplayer",
+                ["playlist_include_framerate"] = "true",
+                ["supported_codecs"] = "avc1",
+                ["p"] = Random.Shared.Next(1_000_000).ToString()
+            };
+            var query = string.Join('&', parameters.Select(pair =>
+                $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
+            return new Uri($"https://usher.ttvnw.net/vod/{vodId}.m3u8?{query}");
+        }
+
+        private static TwitchVodResult VodNotFound(string vodId)
+        {
+            return new TwitchVodResult(TwitchVodStatus.NotFound, vodId, string.Empty, null, string.Empty, false);
         }
 
         private static bool IsSourceVariant(HlsVariant variant)
