@@ -26,4 +26,29 @@ public sealed class KeyboardsTests
         Assert.True(Keyboards.TryParseStopDownloadCallback(button.CallbackData, out var sessionId));
         Assert.Equal("session-123", sessionId);
     }
+
+    [Fact]
+    public void DeleteChannelsKeyboard_PutsEachChannelIntoParsableCallback()
+    {
+        InlineKeyboardMarkup keyboard = Keyboards.GetDeleteChannelsKeyboard(["alpha", "beta_2"]);
+        var callbacks = keyboard.InlineKeyboard.Select(row => Assert.Single(row).CallbackData).ToArray();
+
+        Assert.Equal(2, callbacks.Length);
+        Assert.True(Keyboards.TryParseDeleteChannelCallback(callbacks[1], out var channel));
+        Assert.Equal("beta_2", channel);
+        Assert.False(Keyboards.TryParseDeleteChannelCallback(callbacks[1].Replace("delete_channel:", "stop_download:"), out _));
+        Assert.False(Keyboards.TryParseDeleteChannelCallback("delete_channel:", out _));
+    }
+
+    [Fact]
+    public void MainKeyboard_MovesChannelEditingIntoChannelsMenu()
+    {
+        var mainButtons = Keyboards.GetMainKeyboard().Keyboard.SelectMany(row => row).Select(button => button.Text).ToArray();
+        var channelButtons = Keyboards.GetChannelsKeyboard().Keyboard.SelectMany(row => row).Select(button => button.Text).ToArray();
+
+        Assert.DoesNotContain("➕ Добавить", mainButtons);
+        Assert.DoesNotContain("🗑️ Удалить", mainButtons);
+        Assert.Contains("📺 Каналы", mainButtons);
+        Assert.Equal(["➕ Добавить", "🗑️ Удалить", "🏠 Вернуться на главную"], channelButtons);
+    }
 }

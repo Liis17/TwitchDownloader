@@ -21,6 +21,7 @@ Parent: [[Index]]
 | Runtime v1 / v2 | .NET 8 Windows / .NET 10 cross-platform | `TwitchDownloader.CLI` / `TwitchDownloader2.CLI` |
 | Telegram | Telegram.Bot 22.0.2 / 22.7.4 | v1 / v2 |
 | Конфигурация v2 | `System.Text.Json` → UTF-8 → Base64 | `Data/settings.data` |
+| История записей v2 | SQLite (`Microsoft.Data.Sqlite`) | `Data/history.db`, [[modules/v2-recording-history]] |
 | Twitch live v2 | Публичные GraphQL playback token + Usher HLS | [[modules/v2-twitch-playback]] |
 | Media v2 | `ffmpeg` + `ffprobe` | Финализация, проверка и recovery |
 | Контейнеризация | Docker multi-stage + Compose | `docker/` |
@@ -40,7 +41,8 @@ Parent: [[Index]]
 | `LiveStreamRecorder` | Последовательно пишет один HLS-поток, дедуплицирует sequence, считает рекламу/дыры |
 | `MediaFinalizer` | Создаёт, проверяет и атомарно публикует MP4; восстанавливает orphan `.recording` |
 | `ProcessMediaToolRunner` | Отменяемый запуск `ffmpeg`/`ffprobe` без shell |
-| `Keyboards` | Reply/inline клавиатуры и codec stop callback |
+| `Keyboards` | Reply/inline клавиатуры и codec callback'ов остановки записи и удаления канала |
+| `RecordingHistoryStore` | SQLite-история записей; пишется декоратором уведомлений после обработки записи |
 | `TwitchDownloader2.CLI.Tests` | xUnit-контур с подставными HTTP/process/delay-адаптерами |
 
 ## Сквозной live-поток

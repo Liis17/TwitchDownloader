@@ -16,9 +16,8 @@ namespace TwitchDownloader2.CLI
         {
             return new ReplyKeyboardMarkup(new[]
             {
-                new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
-                new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
-                new KeyboardButton[] { "⛔ Остановить запись", "⚙ Настройки" },
+                new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
+                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись", "⚙ Настройки" },
                 new KeyboardButton[] { "🏠 Главная" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
@@ -33,9 +32,8 @@ namespace TwitchDownloader2.CLI
         {
             return new ReplyKeyboardMarkup(new[]
             {
-                new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
-                new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
-                new KeyboardButton[] { "⛔ Остановить запись", "⚙ Настройки" },
+                new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
+                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись", "⚙ Настройки" },
                 new KeyboardButton[] { "🏠 Главная" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
@@ -64,9 +62,8 @@ namespace TwitchDownloader2.CLI
             return new ReplyKeyboardMarkup(new[]
             {
                 new KeyboardButton[] { "❌ Отменить действие" },
-                new KeyboardButton[] { "📺 Каналы", "➕ Добавить", "🗑️ Удалить" },
-                new KeyboardButton[] { "📜 Статус", "🏺 История", "⬇️ Загрузить" },
-                new KeyboardButton[] { "⛔ Остановить запись", "⚙ Настройки" },
+                new KeyboardButton[] { "📺 Каналы", "📜 Статус", "🏺 История" },
+                new KeyboardButton[] { "⬇️ Загрузить", "⛔ Остановить запись", "⚙ Настройки" },
                 new KeyboardButton[] { "🏠 Главная" },
                 new KeyboardButton[] { "🔁 Принудительно обновить" }
             })
@@ -78,33 +75,11 @@ namespace TwitchDownloader2.CLI
             };
         }
 
-        public static ReplyKeyboardMarkup GetDynamicKeyboard(IEnumerable<string> items, string placeholder = "Введи имя канала тут или выбери ниже")
-        {
-            const int maxButtonsPerRow = 4;
-
-            var rows = items
-            .Select((text, index) => new { text, index })
-            .GroupBy(x => x.index / maxButtonsPerRow)
-            .Select(g => g.Select(x => new KeyboardButton(x.text)).ToArray())
-            .ToList();
-
-            rows.Insert(0, new[] { new KeyboardButton("❌ Отменить действие") });
-
-            return new ReplyKeyboardMarkup(rows)
-            {
-                InputFieldPlaceholder = placeholder,
-                IsPersistent = true,
-                ResizeKeyboard = true,
-                OneTimeKeyboard = false
-            };
-        }
         public static ReplyKeyboardMarkup GetSettingsKeyboard()
         {
             return new ReplyKeyboardMarkup(new[]
             {
                 new KeyboardButton[] { "📂 Папка загрузки", "💾 Сохранить настройки" },
-                new KeyboardButton[] { "[placeholder]", "[placeholder]", "[placeholder]" },
-                new KeyboardButton[] { "[placeholder]", "[placeholder]" },
                 new KeyboardButton[] { "🏠 Вернуться на главную" }
             })
             {
@@ -114,6 +89,51 @@ namespace TwitchDownloader2.CLI
                 OneTimeKeyboard = false
             };
         }
+
+        public static ReplyKeyboardMarkup GetChannelsKeyboard()
+        {
+            return new ReplyKeyboardMarkup(new[]
+            {
+                new KeyboardButton[] { "➕ Добавить", "🗑️ Удалить" },
+                new KeyboardButton[] { "🏠 Вернуться на главную" }
+            })
+            {
+                InputFieldPlaceholder = "Управление каналами",
+                IsPersistent = true,
+                ResizeKeyboard = true,
+                OneTimeKeyboard = false
+            };
+        }
+
+        public static InlineKeyboardMarkup GetDeleteChannelsKeyboard(IEnumerable<string> channels)
+        {
+            var rows = channels.Select(channel => new[]
+            {
+                InlineKeyboardButton.WithCallbackData($"🗑️ {channel}", CreateDeleteChannelCallback(channel))
+            });
+            return new InlineKeyboardMarkup(rows);
+        }
+
+        internal static string CreateDeleteChannelCallback(string channel)
+        {
+            return $"{DeleteChannelCallbackPrefix}{channel}";
+        }
+
+        internal static bool TryParseDeleteChannelCallback(string? callbackData, out string channel)
+        {
+            if (callbackData is not null
+                && callbackData.StartsWith(DeleteChannelCallbackPrefix, StringComparison.Ordinal)
+                && callbackData.Length > DeleteChannelCallbackPrefix.Length)
+            {
+                channel = callbackData[DeleteChannelCallbackPrefix.Length..];
+                return true;
+            }
+
+            channel = string.Empty;
+            return false;
+        }
+
+        private const string DeleteChannelCallbackPrefix = "delete_channel:";
 
         public static InlineKeyboardMarkup GetStopDownloadsKeyboard(IEnumerable<ActiveDownloadInfo> downloads)
         {

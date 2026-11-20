@@ -18,7 +18,8 @@ Telegram-интерфейс владельца и реализация `IRecordi
 |-------|----------|
 | `Start(): void` / `Stop(): void` | Запускают long polling и отменяют его при shutdown. |
 | `HandleUpdateAsync(bot: ITelegramBotClient, update: Update, cancellationToken: CancellationToken): Task` | Отбрасывает чужие апдейты и маршрутизирует message/callback. |
-| `HandleCallbackAsync(bot: ITelegramBotClient, callback: CallbackQuery, cancellationToken: CancellationToken): Task` | Разбирает `stop_download:<sessionId>` и вызывает `RequestStopAsync`. |
+| `HandleCallbackAsync(bot: ITelegramBotClient, callback: CallbackQuery, cancellationToken: CancellationToken): Task` | Разбирает `delete_channel:<channel>` и `stop_download:<sessionId>`; после действия обновляет inline-кнопки исходного сообщения. |
+| `SendHistoryAsync` / `FormatHistoryEntry` | Показывают последние 10 записей из [[modules/v2-recording-history]]: дата, начало–конец, общая длительность и длительность видео, статус, размер, реклама, дыры, MP4 или причина ошибки. |
 | `RecordingStartedAsync(info: RecordingStartedInfo, cancellationToken: CancellationToken): Task` | Показывает канал, качество и путь активного `.recording`. |
 | `RecordingEndedAsync(info: RecordingEndedInfo, cancellationToken: CancellationToken): Task` | Сразу сообщает о естественном завершении эфира и начале обработки. |
 | `RecordingCompletedAsync(info: RecordingCompletionInfo, cancellationToken: CancellationToken): Task` | Сообщает о завершении обработки; показывает длительность, размер, рекламу и дыры, при успехе — MP4, при ошибке — `.failed`. |
@@ -28,7 +29,8 @@ Telegram-интерфейс владельца и реализация `IRecordi
 ## Отмена записи
 
 1. Кнопка `⛔ Остановить запись` находится в главном меню.
-2. Бот получает `ActiveDownloadInfo` и строит inline-кнопку на каждую сессию.
+2. Бот получает `ActiveDownloadInfo` и отдельным сообщением присылает inline-кнопку на каждую сессию.
+   После нажатия кнопки этого сообщения обновляются по текущему списку сессий.
 3. Callback содержит session ID, а не имя канала.
 4. После `Accepted` бот сразу пишет: «Запись остановлена, идёт сборка MP4».
 5. Устаревший callback получает `NotFound` и не затрагивает replacement-сессию.
@@ -39,11 +41,16 @@ Telegram-интерфейс владельца и реализация `IRecordi
 этого уведомления и не блокирует новую запись того же канала. Ручная отмена не отправляет
 уведомление о естественном завершении эфира.
 
-Удаление tracked-канала проходит через `AppSettings.RemoveTrackedChannel`, поэтому одновременно
-снимает его persisted-паузу. Булевы триггеры остались только для добавления, удаления и пути.
+## Каналы
+
+`📺 Каналы` показывает список и меню каналов (`➕ Добавить`, `🗑️ Удалить`, возврат на главную).
+`🗑️ Удалить` присылает отдельное сообщение с inline-кнопкой на каждый канал (`delete_channel:<channel>`);
+после удаления кнопки сообщения обновляются по оставшимся каналам.
+Удаление проходит через `AppSettings.RemoveTrackedChannel`, поэтому одновременно снимает
+persisted-паузу канала. Булевы триггеры остались только для добавления канала и пути.
 
 ## Зависимости
 
-- Использует: [[modules/v2-keyboards]], [[modules/v2-app-settings]],
+- Использует: [[modules/v2-keyboards]], [[modules/v2-app-settings]], [[modules/v2-recording-history]],
   [[modules/v2-twitch-checker]], [[modules/v2-twitch-downloader]].
 - Создаётся в: [[modules/v2-program]].

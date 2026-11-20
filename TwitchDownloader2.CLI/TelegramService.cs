@@ -14,8 +14,9 @@ namespace TwitchDownloader2.CLI
         private CancellationTokenSource? _cancellation;
         private Task? _startupTask;
 
+        private const int HistoryPageSize = 10;
+
         private bool _addChannelTrigger;
-        private bool _deleteChannelTrigger;
         private bool _editDownloadPathTrigger;
 
         public TelegramService(string token, long ownerId)
@@ -96,7 +97,7 @@ namespace TwitchDownloader2.CLI
                 {
                     await SendMessageAsync(
                         $"⚠️ Канал <b>{Html(channel)}</b> уже был добавлен ранее или его имя пусто",
-                        Keyboards.GetMainKeyboard(),
+                        Keyboards.GetChannelsKeyboard(),
                         cancellationToken);
                     return;
                 }
@@ -105,28 +106,7 @@ namespace TwitchDownloader2.CLI
                 Program.TwitchChecker.ForceCheck();
                 await SendMessageAsync(
                     $"✨ Канал <b>{Html(channel)}</b> добавлен в отслеживаемые",
-                    Keyboards.GetMainKeyboard(),
-                    cancellationToken);
-                return;
-            }
-
-            if (_deleteChannelTrigger)
-            {
-                var channel = ExtractChannelName(text.Replace(" ", string.Empty).ToLowerInvariant());
-                DisableTriggers();
-                if (!Program.Settings.RemoveTrackedChannel(channel))
-                {
-                    await SendMessageAsync(
-                        $"⚠️ Такой канал <b>{Html(channel)}</b> отсутствует",
-                        Keyboards.GetMainKeyboard(),
-                        cancellationToken);
-                    return;
-                }
-
-                Program.Settings.Save();
-                await SendMessageAsync(
-                    $"🗑️ Канал <b>{Html(channel)}</b> удалён",
-                    Keyboards.GetMainKeyboard(),
+                    Keyboards.GetChannelsKeyboard(),
                     cancellationToken);
                 return;
             }
@@ -166,24 +146,38 @@ namespace TwitchDownloader2.CLI
 
                 case "🗑️ Удалить":
                     DisableTriggers();
-                    _deleteChannelTrigger = true;
+                    var channelsToDelete = Program.Settings.GetTrackedChannelsSnapshot();
+                    if (channelsToDelete.Count == 0)
+                    {
+                        await SendMessageAsync(
+                            "ℹ️ Отслеживаемых каналов нет",
+                            Keyboards.GetChannelsKeyboard(),
+                            cancellationToken);
+                        return;
+                    }
+
                     await SendMessageAsync(
-                        "Напиши имя канала, который хочешь удалить",
-                        Keyboards.GetDynamicKeyboard(
-                            Program.Settings.GetTrackedChannelsSnapshot(),
-                            "Можешь выбрать на кнопках ниже"),
+                        "Выбери канал, который хочешь удалить:",
+                        Keyboards.GetDeleteChannelsKeyboard(channelsToDelete),
                         cancellationToken);
                     return;
 
                 case "📺 Каналы":
+                    DisableTriggers();
                     var trackedChannels = Program.Settings.GetTrackedChannelsSnapshot();
                     var channels = "---- Отслеживаемые каналы на Twitch ----\n";
-                    channels += "<b>" + string.Join(
-                        '\n',
-                        trackedChannels.Select(channel =>
-                            $"🎥 <a href=\"https://www.twitch.tv/{Html(channel)}\">{Html(channel)}</a>")) + "</b>";
-                    await SendMessageAsync(channels, Keyboards.GetMainKeyboard(), cancellationToken);
+                    channels += trackedChannels.Count == 0
+                        ? "Пока нет ни одного канала"
+                        : "<b>" + string.Join(
+                            '\n',
+                            trackedChannels.Select(channel =>
+                                $"🎥 <a href=\"https://www.twitch.tv/{Html(channel)}\">{Html(channel)}</a>")) + "</b>";
+                    await SendMessageAsync(channels, Keyboards.GetChannelsKeyboard(), cancellationToken);
+                    return;
+
+                case "🏺 История":
                     DisableTriggers();
+                    await SendHistoryAsync(cancellationToken);
                     return;
 
                 case "🏠 Главная":
@@ -244,13 +238,6 @@ namespace TwitchDownloader2.CLI
                         cancellationToken);
                     return;
 
-                case "[placeholder]":
-                    await SendMessageAsync(
-                        "Действие ещё не реализовано",
-                        Keyboards.GetMainKeyboard(),
-                        cancellationToken);
-                    return;
-
                 default:
                     await SendMessageAsync(
                         $"Нет такой команды: <b>{Html(text)}</b>",
@@ -265,6 +252,12 @@ namespace TwitchDownloader2.CLI
             CallbackQuery callback,
             CancellationToken cancellationToken)
         {
+            if (Keyboards.TryParseDeleteChannelCallback(callback.Data, out var channelToDelete))
+            {
+                await HandleDeleteChannelCallbackAsync(bot, callback, channelToDelete, cancellationToken);
+                return;
+            }
+
             if (Keyboards.TryParseStopDownloadCallback(callback.Data, out var sessionId))
             {
                 StopDownloadResult result;
@@ -291,6 +284,12 @@ namespace TwitchDownloader2.CLI
                     _ => "Сессия уже завершена или устарела"
                 };
                 await bot.AnswerCallbackQuery(callback.Id, text: answer, cancellationToken: cancellationToken);
+                await RefreshInlineKeyboardAsync(
+                    callback,
+                    Program.TwitchDownloader.GetActiveDownloads() is { Count: > 0 } remaining
+                        ? Keyboards.GetStopDownloadsKeyboard(remaining)
+                        : null,
+                    cancellationToken);
                 await SendMessageAsync(
                     result switch
                     {
@@ -322,6 +321,107 @@ namespace TwitchDownloader2.CLI
             }
 
             await bot.AnswerCallbackQuery(callback.Id, cancellationToken: cancellationToken);
+        }
+
+        private async Task HandleDeleteChannelCallbackAsync(
+            ITelegramBotClient bot,
+            CallbackQuery callback,
+            string channel,
+            CancellationToken cancellationToken)
+        {
+            DisableTriggers();
+            var removed = Program.Settings.RemoveTrackedChannel(channel);
+            if (removed)
+                Program.Settings.Save();
+
+            await bot.AnswerCallbackQuery(
+                callback.Id,
+                text: removed ? "Канал удалён" : "Канала уже нет в списке",
+                cancellationToken: cancellationToken);
+
+            var remaining = Program.Settings.GetTrackedChannelsSnapshot();
+            await RefreshInlineKeyboardAsync(
+                callback,
+                remaining.Count > 0 ? Keyboards.GetDeleteChannelsKeyboard(remaining) : null,
+                cancellationToken);
+            await SendMessageAsync(
+                removed
+                    ? $"🗑️ Канал <b>{Html(channel)}</b> удалён"
+                    : $"⚠️ Канала <b>{Html(channel)}</b> уже нет в отслеживаемых",
+                Keyboards.GetChannelsKeyboard(),
+                cancellationToken);
+        }
+
+        // Обновляет кнопки под исходным сообщением, чтобы в нём не оставались устаревшие варианты.
+        private async Task RefreshInlineKeyboardAsync(
+            CallbackQuery callback,
+            InlineKeyboardMarkup? replyMarkup,
+            CancellationToken cancellationToken)
+        {
+            if (callback.Message is not { } source)
+                return;
+
+            try
+            {
+                await _bot.EditMessageReplyMarkup(
+                    source.Chat.Id,
+                    source.MessageId,
+                    replyMarkup,
+                    cancellationToken: cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Telegram отклоняет правку без изменений или слишком старого сообщения — это не мешает действию.
+                ConsoleWriteLine($"Не удалось обновить кнопки сообщения: {ex.Message}", ConsoleColor.DarkYellow);
+            }
+        }
+
+        private async Task SendHistoryAsync(CancellationToken cancellationToken)
+        {
+            IReadOnlyList<RecordingHistoryEntry> entries;
+            int total;
+            try
+            {
+                entries = Program.History.GetRecent(HistoryPageSize);
+                total = Program.History.Count();
+            }
+            catch (Exception ex)
+            {
+                await SendMessageAsync(
+                    $"❌ Не удалось прочитать историю записей: {Html(ex.Message)}",
+                    Keyboards.GetMainKeyboard(),
+                    cancellationToken);
+                return;
+            }
+
+            if (entries.Count == 0)
+            {
+                await SendMessageAsync("🏺 История записей пока пуста", Keyboards.GetMainKeyboard(), cancellationToken);
+                return;
+            }
+
+            var text = $"---- 🏺 История записей ----\nПоследние {entries.Count} из {total}\n\n" +
+                       string.Join("\n\n", entries.Select(FormatHistoryEntry));
+            await SendMessageAsync(text, Keyboards.GetMainKeyboard(), cancellationToken);
+        }
+
+        internal static string FormatHistoryEntry(RecordingHistoryEntry entry)
+        {
+            var startedAt = entry.StartedAt.ToLocalTime();
+            var endedAt = entry.RecordingEndedAt.ToLocalTime();
+            var endDate = endedAt.Date == startedAt.Date ? string.Empty : $"{endedAt:dd.MM.yyyy} ";
+            var status = entry.Succeeded
+                ? entry.StoppedManually ? "⛔ остановлена вручную" : "✅ завершена"
+                : "⚠️ ошибка";
+            var file = entry.Succeeded && entry.OutputPath is not null
+                ? $"\n📂 <code>{Html(entry.OutputPath)}</code>"
+                : $"\nПричина: {Html(Truncate(entry.ErrorMessage ?? "неизвестная ошибка", 200))}";
+            return $"🎥 <b>{Html(entry.Channel)}</b> · {status}\n" +
+                   $"📅 {startedAt:dd.MM.yyyy} · {startedAt:HH:mm} – {endDate}{endedAt:HH:mm}\n" +
+                   $"🕓 Общая длительность: <b>{FormatDuration((entry.RecordingEndedAt - entry.StartedAt).TotalSeconds)}</b>" +
+                   $" · видео: <b>{FormatDuration(entry.DurationSeconds)}</b>\n" +
+                   $"💾 {FormatSize(entry.SizeBytes)} · 📢 реклама: {entry.AdvertisementCount} · 🕳 дыр: {entry.GapCount}" +
+                   file;
         }
 
         public Task RecordingStartedAsync(RecordingStartedInfo info, CancellationToken cancellationToken)
@@ -421,7 +521,6 @@ namespace TwitchDownloader2.CLI
         private void DisableTriggers()
         {
             _addChannelTrigger = false;
-            _deleteChannelTrigger = false;
             _editDownloadPathTrigger = false;
         }
 
@@ -443,6 +542,9 @@ namespace TwitchDownloader2.CLI
             var separator = input.IndexOfAny(['/', '?', '&']);
             return separator >= 0 ? input[..separator] : input;
         }
+
+        private static string Truncate(string value, int maxLength) =>
+            value.Length <= maxLength ? value : value[..maxLength] + "…";
 
         private static string Html(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
 

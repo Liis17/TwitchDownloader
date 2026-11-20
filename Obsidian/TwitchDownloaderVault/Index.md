@@ -34,6 +34,7 @@
 | [[modules/v2-twitch-playback]] | `TwitchPlaybackClient` | Прямой Twitch GraphQL/Usher и разбор HLS playlist |
 | [[modules/v2-media-recording]] | `LiveStreamRecorder` / `MediaFinalizer` | Запись HLS-сегментов, проверка MP4 и восстановление сырья |
 | [[modules/v2-keyboards]] | `Keyboards` | Reply/inline-клавиатуры бота |
+| [[modules/v2-recording-history]] | `RecordingHistoryStore` | История записей в SQLite (`Data/history.db`) |
 | [[modules/v2-tests]] | `TwitchDownloader2.CLI.Tests` | xUnit-проверки HLS, сессий, Telegram, shutdown и recovery |
 
 ### Внешние интерфейсы и развёртывание
@@ -54,6 +55,7 @@
 | Telegram | `Telegram.Bot` 22.0.2 (v1) / 22.7.4 (v2) |
 | Внешние CLI | v2: `ffmpeg`, `ffprobe`; v1: также `yt-dlp` |
 | Сериализация | `System.Text.Json` + Base64 (v2) |
+| История записей | SQLite через `Microsoft.Data.Sqlite` (v2) |
 | Платформа | v1: Windows 10/11; v2: Windows, macOS, Linux и Docker |
 | Развёртывание | Docker multi-stage + Compose; updater на Bash |
 

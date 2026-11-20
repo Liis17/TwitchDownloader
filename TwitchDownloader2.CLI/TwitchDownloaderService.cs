@@ -51,7 +51,10 @@ namespace TwitchDownloader2.CLI
         int AdvertisementCount,
         double AdvertisementDurationSeconds,
         int GapCount,
-        string? ErrorMessage);
+        string? ErrorMessage,
+        DateTimeOffset StartedAt,
+        DateTimeOffset RecordingEndedAt,
+        bool StoppedManually);
 
     public interface IRecordingNotificationSink
     {
@@ -362,6 +365,7 @@ namespace TwitchDownloader2.CLI
         {
             await Task.Yield();
             LiveRecordingResult? recording = null;
+            DateTimeOffset? recordingEndedAt = null;
             try
             {
                 // The start notification is best-effort and must not delay end/finalization.
@@ -371,6 +375,7 @@ namespace TwitchDownloader2.CLI
                     session.Playback.MediaPlaylistUrl!,
                     session.RawPath,
                     session.RecordingCancellation.Token);
+                recordingEndedAt = DateTimeOffset.UtcNow;
 
                 var endedNaturally = recording.EndReason is RecordingEndReason.EndList or RecordingEndReason.Offline;
 
@@ -407,7 +412,10 @@ namespace TwitchDownloader2.CLI
                         recording.AdvertisementCount,
                         recording.AdvertisementDurationSeconds,
                         recording.GapCount,
-                        recording.ErrorMessage ?? "Запись не содержит ни одного медиа-сегмента."),
+                        recording.ErrorMessage ?? "Запись не содержит ни одного медиа-сегмента.",
+                        session.StartedAt,
+                        recordingEndedAt.Value,
+                        IsStopRequested(session)),
                         session.FinalizationCancellation.Token);
                     return;
                 }
@@ -442,7 +450,10 @@ namespace TwitchDownloader2.CLI
                     recording.AdvertisementCount,
                     recording.AdvertisementDurationSeconds,
                     recording.GapCount,
-                    finalized.ErrorMessage ?? recording.ErrorMessage),
+                    finalized.ErrorMessage ?? recording.ErrorMessage,
+                    session.StartedAt,
+                    recordingEndedAt.Value,
+                    IsStopRequested(session)),
                     session.FinalizationCancellation.Token);
             }
             catch (OperationCanceledException) when (IsShutdown(session))
@@ -468,7 +479,10 @@ namespace TwitchDownloader2.CLI
                         recording?.AdvertisementCount ?? 0,
                         recording?.AdvertisementDurationSeconds ?? 0,
                         recording?.GapCount ?? 0,
-                        ex.Message),
+                        ex.Message,
+                        session.StartedAt,
+                        recordingEndedAt ?? DateTimeOffset.UtcNow,
+                        IsStopRequested(session)),
                         CancellationToken.None);
                 }
             }
@@ -560,6 +574,12 @@ namespace TwitchDownloader2.CLI
         {
             lock (_gate)
                 return session.SkipFinalization || _shutdownRequested;
+        }
+
+        private bool IsStopRequested(DownloadSession session)
+        {
+            lock (_gate)
+                return session.StopRequested;
         }
 
         private static ActiveDownloadInfo ToInfo(DownloadSession session)

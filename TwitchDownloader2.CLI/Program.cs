@@ -13,6 +13,7 @@
         public static AppSettings Settings { get; private set; } = AppSettings.Load();
         public static TwitchCheckerService TwitchChecker { get; private set; } = null!;
         public static TwitchDownloaderService TwitchDownloader { get; private set; } = null!;
+        public static RecordingHistoryStore History { get; private set; } = null!;
         public static async Task Main(string[] args)
         {
             // Ensure UTF-8 encoding so emojis render correctly in Windows Terminal
@@ -28,11 +29,14 @@
 
             TelegramServiceInstance = new TelegramService(Settings.TelegramToken, Settings.TelegramIdOwner);
 
+            ConsoleWriteLine("Открытие истории записей...");
+            History = new RecordingHistoryStore(RecordingHistoryStore.DefaultDatabasePath);
+
             ConsoleWriteLine("Запуск TwitchDownloader-сервиса...");
             TwitchDownloader = new TwitchDownloaderService(
                 Settings,
                 new TwitchPlaybackClient(PlaybackHttpClient),
-                TelegramServiceInstance);
+                new RecordingHistoryNotificationSink(History, TelegramServiceInstance));
 
             RecoveryTask = RecoverInterruptedDownloadsAsync(RecoveryCancellation.Token);
 

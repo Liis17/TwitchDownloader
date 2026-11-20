@@ -79,5 +79,6 @@ Dockerfile собирает v2 на .NET 10 и устанавливает `ffmpe
 | `TwitchDownloader2.CLI/Properties/AssemblyInfo.cs` | Открывает `internal`-типы v2 тестовому проекту |
 | `docker/.env.example` | Шаблон `docker/.env` с Telegram-переменными |
 | `Data/settings.data` (runtime, v2) | Base64 JSON с настройками |
+| `Data/history.db` (runtime, v2) | SQLite-история записей |
 | `token`, `id` (runtime, v1) | Токен бота и Telegram ID администратора |
 | `tracked_channels.txt` (runtime, v1) | Список отслеживаемых каналов |

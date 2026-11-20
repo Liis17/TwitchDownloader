@@ -15,6 +15,7 @@ Parent: [[Index]]
 | `Settings` | `AppSettings` | Загружается при объявлении поля через `AppSettings.Load()` |
 | `TwitchChecker` | `TwitchCheckerService` | Фоновый мониторинг |
 | `TwitchDownloader` | `TwitchDownloaderService` | Запуск загрузок |
+| `History` | `RecordingHistoryStore` | История записей в `Data/history.db` |
 
 ## Ключевые методы
 | Метод | Описание |
@@ -27,7 +28,7 @@ Parent: [[Index]]
 | `Uptime: string` | Возвращает время работы в формате `HH:MM`. |
 
 ## Зависимости
-- Использует: [[modules/v2-app-settings]], [[modules/v2-telegram-service]], [[modules/v2-twitch-checker]], [[modules/v2-twitch-downloader]]
+- Использует: [[modules/v2-app-settings]], [[modules/v2-telegram-service]], [[modules/v2-twitch-checker]], [[modules/v2-twitch-downloader]], [[modules/v2-recording-history]]
 - Используется в: все сервисы обращаются к `Program.Settings`, `Program.TelegramServiceInstance` и т.д.
 
 ## Важные детали
@@ -37,5 +38,5 @@ Parent: [[Index]]
 - `Uptime` считается от `_startTime = DateTime.Now` (момент загрузки класса).
 - Версия в выводе: `Версия 2.0.0`.
 - Зависимости между сервисами реализованы через **глобальное статическое состояние** (`Program.X`), не через DI.
-- Twitch playback использует один shared `HttpClient`; downloader получает Telegram как `IRecordingNotificationSink`, а checker — интерфейс downloader.
+- Twitch playback использует один shared `HttpClient`; downloader получает Telegram, обёрнутый в `RecordingHistoryNotificationSink` (см. [[modules/v2-recording-history]]), как `IRecordingNotificationSink`, а checker — интерфейс downloader.
 - Recovery запускается до checker, а перечисление orphan-файлов выполняется до появления новых active-сессий.

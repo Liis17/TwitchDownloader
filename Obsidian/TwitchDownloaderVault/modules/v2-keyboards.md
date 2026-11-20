@@ -12,12 +12,14 @@ Parent: [[Index]]
 | Метод | Тип возврата | Описание |
 |-------|-------------|---------|
 | `GetEditPathButton(): InlineKeyboardMarkup` | Inline | Одна кнопка "🖊️ Изменить" с callback `editdownloadpath`. |
-| `GetMainKeyboard(placeholder: string): ReplyKeyboardMarkup` | Reply | Главное меню, включая `⛔ Остановить запись`. |
+| `GetMainKeyboard(placeholder: string): ReplyKeyboardMarkup` | Reply | Главное меню: каналы, статус, история, загрузить, остановка записи, настройки. |
+| `GetChannelsKeyboard(): ReplyKeyboardMarkup` | Reply | Меню каналов: добавить, удалить, вернуться на главную. |
+| `GetDeleteChannelsKeyboard(channels: IEnumerable<string>): InlineKeyboardMarkup` | Inline | Одна кнопка на канал с callback `delete_channel:<channel>`. |
+| `CreateDeleteChannelCallback` / `TryParseDeleteChannelCallback` | string / bool | Единый codec `delete_channel:<channel>`. |
 | `GetDownloadKeyboard(placeholder: string): ReplyKeyboardMarkup` | Reply | Идентична main; задел для download-меню. |
 | `GetOnlyCancelKeyboard(placeholder: string): ReplyKeyboardMarkup` | Reply | Одна кнопка "❌ Отменить действие". |
 | `GetServiceKeyboard(placeholder: string): ReplyKeyboardMarkup` | Reply | Main + Cancel сверху. |
-| `GetDynamicKeyboard(items: IEnumerable<string>, placeholder: string): ReplyKeyboardMarkup` | Reply | До четырёх элементов в ряд + Cancel. |
-| `GetSettingsKeyboard(): ReplyKeyboardMarkup` | Reply | Папка, сохранение, плейсхолдеры и возврат. |
+| `GetSettingsKeyboard(): ReplyKeyboardMarkup` | Reply | Папка, сохранение и возврат. |
 | `GetStopDownloadsKeyboard(downloads: IEnumerable<ActiveDownloadInfo>): InlineKeyboardMarkup` | Inline | Одна callback-кнопка на active-сессию. |
 | `CreateStopDownloadCallback(sessionId: string): string` / `TryParseStopDownloadCallback(callbackData: string?, sessionId: out string): bool` | string / bool | Единый codec `stop_download:<sessionId>`. |
 | `GetPathEditKeyboard(): ReplyKeyboardMarkup` | Reply | Одна кнопка возврата на главную. |
@@ -28,6 +30,6 @@ Parent: [[Index]]
 ## Важные детали
 - Все клавиатуры — `IsPersistent = true, ResizeKeyboard = true, OneTimeKeyboard = false`.
 - `GetDownloadKeyboard` дублирует `GetMainKeyboard` — задел, но кнопка ⬇️ Загрузить пока не имеет своего меню.
-- `🏺 История` не обрабатывается, `⬇️ Загрузить` показывает копию главного меню (см. [[api/telegram-commands]]).
-- В `GetSettingsKeyboard` несколько `[placeholder]` — обработчик отвечает обычным текстом-заглушкой.
+- `⬇️ Загрузить` показывает копию главного меню (см. [[api/telegram-commands]]).
 - Session ID помещается в callback вместо имени канала; итоговая строка укладывается в лимит Telegram callback data.
+  Имя канала (до 25 символов) в `delete_channel:` тоже укладывается в лимит 64 байта.

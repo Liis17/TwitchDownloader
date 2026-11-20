@@ -17,7 +17,10 @@ xUnit-проект для серверного контура v2. Проверя
   мгновенное уведомление естественного конца, параллельная финализация/replacement, отмена,
   pause, устаревшая кнопка остановки и shutdown/recovery.
 - `TwitchDownloader2.CLI.Tests/TwitchCheckerServiceTests.cs` — scheduler и `ForceCheck` без обхода pause.
-- `TwitchDownloader2.CLI.Tests/KeyboardsTests.cs` — callback остановки содержит session ID, а не имя канала.
+- `TwitchDownloader2.CLI.Tests/KeyboardsTests.cs` — callback остановки содержит session ID, а не имя канала;
+  codec callback удаления канала; добавление/удаление вынесены из главного меню в меню каналов.
+- `TwitchDownloader2.CLI.Tests/RecordingHistoryTests.cs` — SQLite-история переживает переоткрытие,
+  сортируется от новых к старым; декоратор сохраняет итог и передаёт уведомление дальше.
 - `TwitchDownloader2.CLI.Tests/AppSettingsTests.cs` — сериализация state mutation и persistence.
 
 ## Запуск
@@ -36,4 +39,4 @@ dotnet test TwitchDownloader.sln
 
 - Тестирует: [[modules/v2-twitch-playback]], [[modules/v2-media-recording]],
   [[modules/v2-twitch-downloader]], [[modules/v2-twitch-checker]],
-  [[modules/v2-keyboards]], [[modules/v2-app-settings]].
+  [[modules/v2-keyboards]], [[modules/v2-app-settings]], [[modules/v2-recording-history]].

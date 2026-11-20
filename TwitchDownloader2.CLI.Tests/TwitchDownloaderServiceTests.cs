@@ -84,6 +84,9 @@ public sealed class TwitchDownloaderServiceTests
         mediaTools.ReleaseFinalization.TrySetResult();
         var completion = await notifications.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.True(completion.Succeeded, completion.ErrorMessage);
+        Assert.False(completion.StoppedManually);
+        Assert.Equal(firstSession.StartedAt, completion.StartedAt);
+        Assert.True(completion.RecordingEndedAt >= completion.StartedAt);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         await service.StopForShutdownAsync(timeout.Token);
@@ -133,6 +136,8 @@ public sealed class TwitchDownloaderServiceTests
         Assert.True(completion.Succeeded, completion.ErrorMessage);
         Assert.True(File.Exists(completion.OutputPath));
         Assert.Equal(2, completion.DurationSeconds);
+        Assert.True(completion.StoppedManually);
+        Assert.Equal(session.StartedAt, completion.StartedAt);
         Assert.False(notifications.Ended.Task.IsCompleted);
         Assert.Empty(service.GetActiveDownloads());
     }
